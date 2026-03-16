@@ -27,6 +27,7 @@
 		E4239C2A2D33EA110011DE77 /* CosmicPathSwift.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CosmicPathSwift.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4239C3E2D33EA130011DE77 /* CosmicPathSwiftTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CosmicPathSwiftTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4239C482D33EA130011DE77 /* CosmicPathSwiftUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CosmicPathSwiftUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E442C5CD2D6A8F0B00B8D68E /* MyPlayground.playground */ = {isa = PBXFileReference; lastKnownFileType = file.playground; path = MyPlayground.playground; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.swift; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -88,6 +89,7 @@
 		E4239C212D33EA110011DE77 = {
 			isa = PBXGroup;
 			children = (
+				E442C5CD2D6A8F0B00B8D68E /* MyPlayground.playground */,
 				E4239C2C2D33EA110011DE77 /* CosmicPathSwift */,
 				E4239C412D33EA130011DE77 /* CosmicPathSwiftTests */,
 				E4239C4B2D33EA130011DE77 /* CosmicPathSwiftUITests */,
