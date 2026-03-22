@@ -10,18 +10,34 @@ import Foundation
 
 struct CoordinateTransformer {
     let canvasCenter: CGPoint
+    let scale: Double
 
-    init(canvasSize: CGSize) {
+    /// Creates a transformer that maps simulation coordinates to canvas coordinates.
+    /// The scale ensures the initial separation fits within the canvas. Since the star
+    /// sits at center and the planet extends to one side, we fit the separation into
+    /// 40% of the canvas width (leaving margin from center to edge).
+    init(canvasSize: CGSize, simulationSeparation: Double = CelestialConstants.baseAU) {
         self.canvasCenter = CGPoint(
             x: canvasSize.width / 2,
             y: canvasSize.height / 2
         )
+        // The planet starts at (separation, 0) from center.
+        // It must fit within ~40% of width from center (leaving 10% padding to edge).
+        // Also consider height for when orbit goes above/below.
+        let availableHalfWidth = canvasSize.width * 0.40
+        let availableHalfHeight = canvasSize.height * 0.40
+        let available = min(availableHalfWidth, availableHalfHeight)
+        if simulationSeparation > 0 {
+            self.scale = available / simulationSeparation
+        } else {
+            self.scale = 1.0
+        }
     }
 
     func simulationToCanvas(_ v: Vector2D) -> CGPoint {
         CGPoint(
-            x: canvasCenter.x + v.x,
-            y: canvasCenter.y + v.y
+            x: canvasCenter.x + v.x * scale,
+            y: canvasCenter.y + v.y * scale
         )
     }
 

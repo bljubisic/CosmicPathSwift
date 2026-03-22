@@ -16,6 +16,7 @@ protocol SimulationEngineProtocol: AnyObject {
     var body1: CelestialBody { get }
     var body2: CelestialBody { get }
     var metrics: RelativisticMetrics { get }
+    var isBlackHoleMode: Bool { get set }
 
     func step(dt: Double)
 }
@@ -41,6 +42,7 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     private(set) var body1: CelestialBody
     private(set) var body2: CelestialBody
     private(set) var metrics = RelativisticMetrics()
+    var isBlackHoleMode: Bool = false
 
     // Perihelion tracking for precession measurement
     private var previousSeparation: Double = .infinity
@@ -142,10 +144,10 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         body1.velocity = body1.velocity + 0.5 * (oldA1 + newA1) * dt
         body2.velocity = body2.velocity + 0.5 * (oldA2 + newA2) * dt
 
-        // Check for absorption past the event horizon
+        // Check for absorption past the event horizon (only in black hole mode)
         let rs = 2.0 * Self.G * body1.mass / Self.cSquared
         let sep = (body2.position - body1.position).magnitude
-        if rs >= Self.blackHoleThreshold && sep <= rs {
+        if isBlackHoleMode && rs >= Self.blackHoleThreshold && sep <= rs {
             body2.position = body1.position
             body2.velocity = .zero
             metrics.isAbsorbed = true
@@ -200,7 +202,7 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         metrics.schwarzschildRadius = rs
         metrics.photonSphereRadius = 1.5 * rs
         metrics.iscoRadius = 3.0 * rs
-        metrics.isBlackHole = rs >= Self.blackHoleThreshold
+        metrics.isBlackHole = isBlackHoleMode && rs >= Self.blackHoleThreshold
 
         let ratio = min(rs / max(r, Self.softening), 0.99)
         metrics.timeDilationFactor = sqrt(1.0 - ratio)

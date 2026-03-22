@@ -20,6 +20,8 @@ class SimulationViewModel {
     var isRunning: Bool = false
     var metrics = RelativisticMetrics()
     var config = SimulationConfig()
+    /// Current coordinate scale factor (simulation units → canvas pixels)
+    var coordinateScale: Double = 1.0
 
     // MARK: - Dependencies
 
@@ -42,31 +44,36 @@ class SimulationViewModel {
 
     /// Initializes the simulation for a given canvas size.
     func setup(canvasSize: CGSize) {
-        transformer = CoordinateTransformer(canvasSize: canvasSize)
+        transformer = CoordinateTransformer(canvasSize: canvasSize, simulationSeparation: config.simulationSeparation)
+
+        let mass1 = config.simulationMass1
+        let mass2 = config.simulationMass2
+        let separation = config.simulationSeparation
 
         let pos1 = Vector2D(x: 0, y: 0)
-        let pos2 = Vector2D(x: config.initialSeparation, y: 0)
+        let pos2 = Vector2D(x: separation, y: 0)
 
         // Orbital speed for a roughly circular orbit: v = sqrt(G * M / r)
         let orbitalSpeed = sqrt(
-            GravitySimulationEngine.G * config.mass1 / config.initialSeparation
+            GravitySimulationEngine.G * mass1 / separation
         )
 
         // Give the heavy body a small opposite velocity to conserve momentum
-        let v1y = -(config.mass2 / config.mass1) * orbitalSpeed
+        let v1y = -(mass2 / mass1) * orbitalSpeed
 
         let celestial1 = CelestialBody(
-            mass: config.mass1,
+            mass: mass1,
             position: pos1,
             velocity: Vector2D(x: 0, y: v1y)
         )
         let celestial2 = CelestialBody(
-            mass: config.mass2,
+            mass: mass2,
             position: pos2,
             velocity: Vector2D(x: 0, y: orbitalSpeed)
         )
 
         engine = engineFactory(celestial1, celestial2)
+        engine?.isBlackHoleMode = config.isBlackHoleMode
         syncState()
     }
 
@@ -89,6 +96,12 @@ class SimulationViewModel {
     func reset(canvasSize: CGSize) {
         pause()
         setup(canvasSize: canvasSize)
+    }
+
+    /// Updates the coordinate transformer when the canvas is resized without disturbing the simulation.
+    func resizeCanvas(_ size: CGSize) {
+        transformer = CoordinateTransformer(canvasSize: size, simulationSeparation: config.simulationSeparation)
+        syncState()
     }
 
     /// Reinitializes the simulation with current config without changing run state.
@@ -117,5 +130,6 @@ class SimulationViewModel {
         body2Trail = transformer.transformTrail(engine.body2.trail)
 
         metrics = engine.metrics
+        coordinateScale = transformer.scale
     }
 }

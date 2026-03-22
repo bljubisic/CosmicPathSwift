@@ -13,6 +13,21 @@ struct ContentView: View {
     @State private var canvasSize: CGSize = .zero
 
     var body: some View {
+        GeometryReader { geometry in
+            let isLandscape = geometry.size.width > geometry.size.height
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if isLandscape {
+                    landscapeLayout
+                } else {
+                    portraitLayout
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var portraitLayout: some View {
         VStack(spacing: 0) {
             titleBar
 
@@ -25,12 +40,33 @@ struct ContentView: View {
                 .padding(.horizontal)
                 .padding(.top, 6)
 
-            ControlPanelView(viewModel: viewModel, canvasSize: canvasSize)
+            ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: true)
                 .padding(.horizontal)
                 .padding(.vertical, 10)
         }
-        .background(Color.black)
-        .preferredColorScheme(.dark)
+    }
+
+    private var landscapeLayout: some View {
+        ZStack(alignment: .bottom) {
+            SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                HStack {
+                    massLegend
+                    Spacer()
+                    MetricsPanelView(viewModel: viewModel)
+                }
+                .padding(.horizontal)
+                .padding(.top, 6)
+
+                ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+            }
+            .background(Color.black.opacity(0.5))
+        }
+        .ignoresSafeArea()
     }
 
     // MARK: - Title Bar
@@ -63,14 +99,14 @@ struct ContentView: View {
                 Circle()
                     .fill(viewModel.metrics.isBlackHole ? Color.red : Color.orange)
                     .frame(width: 10, height: 10)
-                Text("M\u{2081} = \(Int(viewModel.config.mass1))")
+                Text(viewModel.config.mass1Label)
                     .font(.caption)
             }
             HStack(spacing: 4) {
                 Circle()
                     .fill(Color.cyan)
                     .frame(width: 10, height: 10)
-                Text("M\u{2082} = \(Int(viewModel.config.mass2))")
+                Text(viewModel.config.mass2Label)
                     .font(.caption)
             }
         }

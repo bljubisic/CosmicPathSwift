@@ -59,10 +59,10 @@ struct SimulationCanvasView: View {
             }
             .onChange(of: geometry.size) { _, newSize in
                 canvasSize = newSize
-                viewModel.reset(canvasSize: newSize)
+                viewModel.resizeCanvas(newSize)
             }
         }
-        .aspectRatio(4 / 3, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Body 1 (Star or Black Hole)
@@ -70,7 +70,7 @@ struct SimulationCanvasView: View {
     @ViewBuilder
     private var body1View: some View {
         if viewModel.metrics.isBlackHole {
-            let rs = CGFloat(viewModel.metrics.schwarzschildRadius)
+            let rs = CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
             ZStack {
                 Circle()
                     .fill(Color.black)
@@ -97,12 +97,12 @@ struct SimulationCanvasView: View {
                         colors: [.yellow, .orange, .red.opacity(0.8)],
                         center: .center,
                         startRadius: 0,
-                        endRadius: radiusForMass(viewModel.config.mass1)
+                        endRadius: starRadius
                     )
                 )
                 .frame(
-                    width: radiusForMass(viewModel.config.mass1) * 2,
-                    height: radiusForMass(viewModel.config.mass1) * 2
+                    width: starRadius * 2,
+                    height: starRadius * 2
                 )
                 .shadow(color: .orange.opacity(0.6), radius: 8)
                 .position(viewModel.body1Position)
@@ -119,12 +119,12 @@ struct SimulationCanvasView: View {
                     colors: [.white, color, color.opacity(0.8)],
                     center: .center,
                     startRadius: 0,
-                    endRadius: radiusForMass(viewModel.config.mass2)
+                    endRadius: planetRadius
                 )
             )
             .frame(
-                width: radiusForMass(viewModel.config.mass2) * 2,
-                height: radiusForMass(viewModel.config.mass2) * 2
+                width: planetRadius * 2,
+                height: planetRadius * 2
             )
             .shadow(color: color.opacity(0.6), radius: 6)
             .position(viewModel.body2Position)
@@ -134,7 +134,7 @@ struct SimulationCanvasView: View {
 
     private var schwarzschildRing: some View {
         let isBlackHole = viewModel.metrics.isBlackHole
-        let rs = CGFloat(viewModel.metrics.schwarzschildRadius)
+        let rs = CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
         return Circle()
             .stroke(
                 isBlackHole ? Color.red.opacity(0.6) : Color.red.opacity(0.3),
@@ -177,7 +177,7 @@ struct SimulationCanvasView: View {
         Canvas { context, canvasSize in
             let step: CGFloat = 50
             let body1Center = viewModel.body1Position
-            let warpStrength = CGFloat(viewModel.config.mass1) * 0.04
+            let warpStrength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
             let color = Color.white.opacity(0.06)
 
             var xPos: CGFloat = 0
@@ -276,10 +276,22 @@ struct SimulationCanvasView: View {
 
     // MARK: - Helpers
 
-    private func radiusForMass(_ mass: Double) -> CGFloat {
-        let minRadius: CGFloat = 6
-        let scale: CGFloat = 5
-        return minRadius + scale * CGFloat(log(mass + 1))
+    /// Star radius: grows slightly with mass multiplier.
+    /// Minimum 8pt so it's always clearly visible.
+    private var starRadius: CGFloat {
+        let baseRadius: CGFloat = 14
+        let massScale = CGFloat(log(viewModel.config.mass1Multiplier + 1)) * 0.5 + 1
+        return max(8, baseRadius * massScale)
+    }
+
+    /// Planet radius: proportionally smaller than the star.
+    /// Real ratio is 109:1 but compressed to ~5:1 for visibility.
+    /// Heavier planet → denser → slightly smaller. Minimum 3pt.
+    private var planetRadius: CGFloat {
+        let baseRatio: CGFloat = 5.0
+        let baseRadius = starRadius / baseRatio
+        let massScale = 1.0 / (CGFloat(log(viewModel.config.mass2Multiplier + 1)) * 0.3 + 1)
+        return max(3, baseRadius * massScale)
     }
 
     private func warpPoint(_ point: CGPoint, toward center: CGPoint, strength: CGFloat) -> CGPoint {

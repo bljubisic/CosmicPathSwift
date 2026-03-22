@@ -12,7 +12,7 @@ struct BlackHoleEffectsView: View {
     let viewModel: SimulationViewModel
 
     private var rs: CGFloat {
-        CGFloat(viewModel.metrics.schwarzschildRadius)
+        CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
     }
 
     var body: some View {
@@ -86,8 +86,8 @@ struct BlackHoleEffectsView: View {
                 style: StrokeStyle(lineWidth: 0.5, dash: [2, 4])
             )
             .frame(
-                width: CGFloat(viewModel.metrics.iscoRadius) * 2,
-                height: CGFloat(viewModel.metrics.iscoRadius) * 2
+                width: CGFloat(viewModel.metrics.iscoRadius) * CGFloat(viewModel.coordinateScale) * 2,
+                height: CGFloat(viewModel.metrics.iscoRadius) * CGFloat(viewModel.coordinateScale) * 2
             )
             .position(viewModel.body1Position)
     }
@@ -101,8 +101,8 @@ struct BlackHoleEffectsView: View {
                 style: StrokeStyle(lineWidth: 1, dash: [3, 3])
             )
             .frame(
-                width: CGFloat(viewModel.metrics.photonSphereRadius) * 2,
-                height: CGFloat(viewModel.metrics.photonSphereRadius) * 2
+                width: CGFloat(viewModel.metrics.photonSphereRadius) * CGFloat(viewModel.coordinateScale) * 2,
+                height: CGFloat(viewModel.metrics.photonSphereRadius) * CGFloat(viewModel.coordinateScale) * 2
             )
             .position(viewModel.body1Position)
     }

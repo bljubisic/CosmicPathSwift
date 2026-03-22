@@ -17,6 +17,7 @@ class MockSimulationEngine: SimulationEngineProtocol {
     var body1: CelestialBody
     var body2: CelestialBody
     var metrics = RelativisticMetrics()
+    var isBlackHoleMode: Bool = false
     var stepCount = 0
 
     init(body1: CelestialBody, body2: CelestialBody) {
@@ -88,29 +89,41 @@ struct Vector2DTests {
 
 struct CoordinateTransformerTests {
     @Test func originMapsToCenter() {
-        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300))
+        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 150)
         let result = transformer.simulationToCanvas(.zero)
         #expect(result.x == 200)
         #expect(result.y == 150)
     }
 
-    @Test func offsetMapsCorrectly() {
-        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300))
+    @Test func offsetMapsCorrectlyWithScale() {
+        // Canvas 400x300, separation 100 → scale = min(400,300)*0.7/100 = 2.1
+        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 100)
+        let scale = transformer.scale
         let result = transformer.simulationToCanvas(Vector2D(x: 50, y: -30))
-        #expect(result.x == 250)
-        #expect(result.y == 120)
+        #expect(abs(result.x - (200 + 50 * scale)) < 0.01)
+        #expect(abs(result.y - (150 + (-30) * scale)) < 0.01)
+    }
+
+    @Test func scaleAdjustsWithSeparation() {
+        let small = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 100)
+        let large = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 300)
+        // Larger separation should produce a smaller scale
+        #expect(large.scale < small.scale)
     }
 
     @Test func trailTransformation() {
-        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 200, height: 200))
+        // Use separation = 140 so scale = min(200,200)*0.7/140 = 1.0
+        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 200, height: 200), simulationSeparation: 140)
         let trail = [
             Vector2D(x: 0, y: 0),
             Vector2D(x: 10, y: 10)
         ]
         let result = transformer.transformTrail(trail)
+        let scale = transformer.scale
         #expect(result.count == 2)
         #expect(result[0] == CGPoint(x: 100, y: 100))
-        #expect(result[1] == CGPoint(x: 110, y: 110))
+        #expect(abs(result[1].x - (100 + 10 * scale)) < 0.01)
+        #expect(abs(result[1].y - (100 + 10 * scale)) < 0.01)
     }
 }
 
@@ -174,15 +187,23 @@ struct GravitySimulationEngineTests {
     }
 
     @Test func blackHoleDetection() {
-        // Small mass: not a black hole
-        let smallBody = CelestialBody(mass: 100, position: .zero, velocity: .zero)
         let orbiter = CelestialBody(mass: 1, position: Vector2D(x: 100, y: 0), velocity: .zero)
+
+        // Small mass with black hole mode: not a black hole (r_s too small)
+        let smallBody = CelestialBody(mass: 100, position: .zero, velocity: .zero)
         let smallEngine = GravitySimulationEngine(body1: smallBody, body2: orbiter)
+        smallEngine.isBlackHoleMode = true
+        smallEngine.step(dt: 0) // trigger metrics update
         #expect(!smallEngine.metrics.isBlackHole)
 
-        // Large mass: is a black hole
+        // Large mass without toggle: not flagged as black hole
         let bigBody = CelestialBody(mass: 5000, position: .zero, velocity: .zero)
         let bigEngine = GravitySimulationEngine(body1: bigBody, body2: orbiter)
+        #expect(!bigEngine.metrics.isBlackHole)
+
+        // Large mass with toggle: is a black hole
+        bigEngine.isBlackHoleMode = true
+        bigEngine.step(dt: 0)
         #expect(bigEngine.metrics.isBlackHole)
     }
 
@@ -199,6 +220,7 @@ struct GravitySimulationEngineTests {
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        engine.isBlackHoleMode = true
         #expect(!engine.metrics.isAbsorbed)
 
         // Step until absorbed or max iterations
@@ -220,6 +242,7 @@ struct GravitySimulationEngineTests {
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        engine.isBlackHoleMode = true
 
         // Force absorption
         for _ in 0..<1000 {
@@ -290,11 +313,13 @@ struct SimulationViewModelTests {
         let vm = SimulationViewModel { body1, body2 in
             MockSimulationEngine(body1: body1, body2: body2)
         }
-        vm.config.initialSeparation = 100
+        // Set multipliers so simulationSeparation = 100 (baseAU=150, so 100/150 ≈ 0.667)
+        vm.config.separationAU = 100.0 / CelestialConstants.baseAU
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
         // Body2 starts at (separation, 0) from center
-        #expect(vm.body2Position.x == 300)
+        let expectedX = 200.0 + vm.config.simulationSeparation
+        #expect(abs(vm.body2Position.x - expectedX) < 0.01)
         #expect(vm.body2Position.y == 150)
     }
 }
