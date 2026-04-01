@@ -232,6 +232,54 @@ struct GravitySimulationEngineTests {
         #expect(engine.metrics.isAbsorbed)
     }
 
+    @Test func properTimeAccumulates() {
+        let body1 = CelestialBody(mass: 200, position: .zero, velocity: .zero)
+        let body2 = CelestialBody(
+            mass: 5,
+            position: Vector2D(x: 150, y: 0),
+            velocity: Vector2D(x: 0, y: 25)
+        )
+
+        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        #expect(engine.metrics.properTime == 0)
+
+        for _ in 0..<100 {
+            engine.step(dt: 0.02)
+        }
+
+        // Proper time should have accumulated and be less than coordinate time
+        #expect(engine.metrics.properTime > 0)
+        let coordinateTime = 100 * 0.02
+        #expect(engine.metrics.properTime < coordinateTime)
+    }
+
+    @Test func grCorrectionCausesPrecession() {
+        // Set up a nearly circular orbit and run for many orbits
+        let mass: Double = 500
+        let r: Double = 80.0
+        let rs = 2.0 * GravitySimulationEngine.G * mass / GravitySimulationEngine.cSquared
+
+        // Relativistic circular orbit speed
+        let v = sqrt(GravitySimulationEngine.G * mass / max(r - 1.5 * rs, 0.1))
+
+        let body1 = CelestialBody(mass: mass, position: .zero, velocity: .zero)
+        let body2 = CelestialBody(
+            mass: 1,
+            position: Vector2D(x: r, y: 0),
+            velocity: Vector2D(x: 0, y: v)
+        )
+
+        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+
+        // Run for many steps to allow precession to accumulate
+        for _ in 0..<10000 {
+            engine.step(dt: 0.01)
+        }
+
+        // Precession angle should be non-zero (GR effect)
+        #expect(abs(engine.metrics.precessionAngle) > 0.01)
+    }
+
     @Test func absorbedEngineStopsUpdating() {
         let body1 = CelestialBody(mass: 10000, position: .zero, velocity: .zero)
         let rs = 2.0 * GravitySimulationEngine.G * 10000.0 / GravitySimulationEngine.cSquared
@@ -260,6 +308,7 @@ struct GravitySimulationEngineTests {
 
 // MARK: - SimulationViewModel Tests (with Mock Engine)
 
+@MainActor
 struct SimulationViewModelTests {
     @Test func setupCreatesEngine() {
         var engineCreated = false
@@ -317,10 +366,10 @@ struct SimulationViewModelTests {
         vm.config.separationAU = 100.0 / CelestialConstants.baseAU
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
-        // Body2 starts at (separation, 0) from center
-        let expectedX = 200.0 + vm.config.simulationSeparation
+        // Body2 starts at (separation, 0) from center, scaled by coordinateScale
+        let expectedX = 200.0 + vm.config.simulationSeparation * vm.coordinateScale
         #expect(abs(vm.body2Position.x - expectedX) < 0.01)
-        #expect(vm.body2Position.y == 150)
+        #expect(abs(vm.body2Position.y - 150) < 0.01)
     }
 }
 
