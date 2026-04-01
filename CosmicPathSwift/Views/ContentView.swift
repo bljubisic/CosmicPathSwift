@@ -28,21 +28,48 @@ struct ContentView: View {
     }
 
     private var portraitLayout: some View {
-        VStack(spacing: 0) {
-            titleBar
+        ZStack {
+            if viewModel.isRunning {
+                // Running: full-screen canvas with floating pause button and metrics
+                SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
+                    .ignoresSafeArea()
 
-            SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
-                .padding(.top, 8)
+                VStack {
+                    HStack {
+                        massLegend
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
 
-            MetricsPanelView(viewModel: viewModel)
-                .padding(.horizontal)
-                .padding(.top, 6)
+                    Spacer()
 
-            ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: true)
-                .padding(.horizontal)
-                .padding(.vertical, 10)
+                    MetricsPanelView(viewModel: viewModel)
+                        .padding(.horizontal)
+                        .padding(.bottom, 4)
+
+                    pauseButton
+                        .padding(.bottom, 16)
+                }
+            } else {
+                // Paused/stopped: full controls visible
+                VStack(spacing: 0) {
+                    titleBar
+
+                    SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+
+                    MetricsPanelView(viewModel: viewModel)
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+
+                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: true)
+                        .padding(.horizontal)
+                        .padding(.vertical, 10)
+                }
+            }
         }
     }
 
@@ -51,22 +78,52 @@ struct ContentView: View {
             SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                HStack {
-                    massLegend
+            if viewModel.isRunning {
+                // Running: floating pause button and metrics overlay
+                VStack {
                     Spacer()
-                    MetricsPanelView(viewModel: viewModel)
-                }
-                .padding(.horizontal)
-                .padding(.top, 6)
+                    HStack {
+                        massLegend
+                        Spacer()
+                        MetricsPanelView(viewModel: viewModel)
+                    }
+                    .padding(.horizontal)
 
-                ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+                    pauseButton
+                        .padding(.bottom, 8)
+                }
+            } else {
+                // Paused/stopped: bottom overlay with metrics and controls
+                VStack(spacing: 0) {
+                    HStack {
+                        massLegend
+                        Spacer()
+                        MetricsPanelView(viewModel: viewModel)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+
+                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                }
+                .background(Color.black.opacity(0.5))
             }
-            .background(Color.black.opacity(0.5))
         }
         .ignoresSafeArea()
+    }
+
+    // MARK: - Pause Button
+
+    private var pauseButton: some View {
+        Button {
+            viewModel.pause()
+        } label: {
+            Label("Pause", systemImage: "pause.fill")
+                .frame(minWidth: 100)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.orange)
     }
 
     // MARK: - Title Bar

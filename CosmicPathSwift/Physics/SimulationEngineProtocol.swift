@@ -15,13 +15,19 @@
 //  where rₛ = 2GM/c² is the Schwarzschild radius. The geodesic equations
 //  (equations of motion for a free particle in this curved spacetime) yield
 //  two conserved quantities — specific energy E and specific angular
-//  momentum L — and an effective radial equation of motion:
+//  momentum L — and a radial equation of motion (in the radial coordinate r):
 //
 //      d²r/dt² = -GM/r² + L²/r³ - 3GML²/(c²r⁴)
 //
+//  However, since we integrate in Cartesian coordinates with Velocity-Verlet,
+//  the centrifugal term L²/r³ is handled implicitly by the integrator (it
+//  arises naturally from tangential velocity in Cartesian frame). The actual
+//  Cartesian acceleration applied is:
+//
+//      a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
+//
 //  Term breakdown:
-//    • -GM/r²           Newtonian gravitational attraction
-//    • +L²/r³           Centrifugal barrier (also present in Newtonian mechanics)
+//    • -GM/r²           Newtonian gravitational attraction (same as Newton)
 //    • -3GML²/(c²r⁴)   General-relativistic correction from spacetime curvature.
 //                        This term has no Newtonian analogue. It deepens the
 //                        effective potential at small r, causing:
@@ -78,11 +84,14 @@ protocol SimulationEngineProtocol: AnyObject {
 /// paths (geodesics) rather than applying perturbative force corrections
 /// to flat-space trajectories.
 ///
-/// The radial acceleration on a test particle orbiting mass M:
+/// The Cartesian acceleration on a test particle orbiting mass M:
 ///
-///     a_r = -GM/r² + L²/r³ - 3GML²/(c²r⁴)
+///     a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
 ///
-/// where L = |r × v| is the specific orbital angular momentum.
+/// where L = |r × v| is the specific orbital angular momentum and r̂ points
+/// outward from the source. The centrifugal term L²/r³ from the polar
+/// geodesic equation is not applied explicitly — the Cartesian Velocity-Verlet
+/// integrator handles it naturally through tangential velocity.
 ///
 /// For the two-body case, each body moves on the geodesic of the other
 /// body's Schwarzschild metric, with accelerations scaled by the
@@ -209,42 +218,45 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         return (a1, a2)
     }
 
-    /// Computes the Schwarzschild geodesic-derived acceleration on a single body.
+    /// Computes the Schwarzschild GR-corrected acceleration on a single body
+    /// in Cartesian coordinates.
     ///
     /// ## Derivation
     ///
-    /// Starting from the Schwarzschild metric in Schwarzschild coordinates (t, r, θ, φ):
-    ///
-    ///     ds² = -(1 - rₛ/r)c²dt² + dr²/(1 - rₛ/r) + r²(dθ² + sin²θ dφ²)
-    ///
-    /// For equatorial orbits (θ = π/2), the geodesic equations give two conserved
-    /// quantities from the timelike and azimuthal Killing vectors:
-    ///
-    ///     E = (1 - rₛ/r) dt/dτ        (specific energy)
-    ///     L = r² dφ/dτ                 (specific angular momentum)
-    ///
-    /// The radial geodesic equation, converted to coordinate time t, yields:
+    /// The Schwarzschild geodesic radial equation (in coordinate time) is:
     ///
     ///     d²r/dt² = -GM/r² + L²/r³ - 3GML²/(c²r⁴)
     ///
-    /// ## Terms
+    /// where r is the radial coordinate and L is the specific angular momentum.
+    /// However, `d²r/dt²` is NOT the radial component of Cartesian acceleration.
+    /// In polar coordinates, the Cartesian radial acceleration aᵣ relates to
+    /// the radial coordinate acceleration r̈ by:
     ///
-    /// - `-GM/r²`:           Newtonian gravity (always attractive, toward source)
-    /// - `+L²/r³`:           Centrifugal barrier (repulsive, also present in Newtonian
-    ///                        effective potential but expressed differently there)
-    /// - `-3GML²/(c²r⁴)`:   **GR curvature correction** — the uniquely relativistic term.
-    ///                        Always attractive. Dominates at small r, deepening the
-    ///                        effective potential well and eliminating the centrifugal
-    ///                        barrier below the ISCO. This single term is responsible for
-    ///                        perihelion precession, the ISCO, and plunge orbits.
+    ///     r̈ = aᵣ + r·φ̇² = aᵣ + L²/r³
     ///
-    /// ## Cartesian Decomposition
+    /// Solving for the Cartesian acceleration:
     ///
-    /// The radial acceleration is projected onto Cartesian coordinates using the
-    /// radial unit vector r̂ (from source to body) and azimuthal unit vector φ̂
-    /// (perpendicular, in the prograde direction). A Coriolis-like tangential term
-    /// (-2 vᵣ vᵩ / r) arises from the coordinate transformation and ensures
-    /// angular momentum conservation in the Cartesian frame.
+    ///     aᵣ = r̈ - L²/r³ = -GM/r² + L²/r³ - 3GML²/(c²r⁴) - L²/r³
+    ///        = -GM/r² - 3GML²/(c²r⁴)
+    ///
+    /// The centrifugal term L²/r³ cancels out — it is a coordinate artifact of
+    /// polar decomposition. The Cartesian Velocity-Verlet integrator naturally
+    /// produces the centrifugal effect through the tangential velocity component.
+    /// Similarly, the Coriolis term (-2ṙφ̇) is handled implicitly.
+    ///
+    /// ## Cartesian Acceleration
+    ///
+    /// The acceleration applied in Cartesian coordinates is purely radial:
+    ///
+    ///     a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
+    ///
+    /// - **-GM/r²**: Newtonian gravity (always inward)
+    /// - **-3GML²/(c²r⁴)**: GR curvature correction from the Schwarzschild metric.
+    ///   This term has no Newtonian analogue. It deepens the effective potential
+    ///   at small r, causing perihelion precession, the ISCO, and plunge orbits.
+    ///
+    /// Since r̂ points outward (from source to body) and both terms are negative,
+    /// the resulting acceleration vector points inward (toward the source).
     ///
     /// - Parameters:
     ///   - M: Mass of the gravitating source.
@@ -262,33 +274,23 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     ) -> Vector2D {
         let GM = G * M
         let r2 = dist * dist
-        let r3 = r2 * dist
         let r4 = r2 * r2
 
         // Specific angular momentum: L = |r × v| (z-component in 2D)
         let L = abs(r.x * v.y - r.y * v.x)
         let L2 = L * L
 
-        // Radial acceleration from the Schwarzschild geodesic equation:
-        //   a_r = -GM/r²  +  L²/r³  -  3GML²/(c²r⁴)
-        let aNewton = -GM / r2                       // Newtonian gravity (toward source)
-        let aCentrifugal = L2 / r3                   // Centrifugal barrier (outward)
-        let aGR = -3.0 * GM * L2 / (cSquared * r4)  // GR curvature correction (inward)
-        let aRadial = aNewton + aCentrifugal + aGR
+        // Cartesian radial acceleration:
+        //   a = -GM/r² - 3GML²/(c²r⁴)
+        // The centrifugal term L²/r³ from the polar geodesic equation is NOT
+        // included — it cancels when converting to Cartesian coordinates because
+        // the Velocity-Verlet integrator handles it implicitly via tangential velocity.
+        let aNewton = -GM / r2                       // Newtonian gravity (inward)
+        let aGR = -3.0 * GM * L2 / (cSquared * r4)  // GR correction (inward)
 
-        // Decompose into r̂ and φ̂ unit vectors
-        // r̂ points from source to body (outward), φ̂ is perpendicular (prograde)
-        let phiHat = Vector2D(x: -rHat.y, y: rHat.x)
-
-        // Tangential acceleration from angular momentum evolution in
-        // the two-body problem: conserves L in the Schwarzschild limit.
-        let vRadial = v.dot(rHat)
-        let vTangential = v.dot(phiHat)
-        let aTangential = -2.0 * vRadial * vTangential / dist
-
-        // Note: aRadial is negative (toward source) in the bound orbit regime,
-        // so multiplying by rHat (which points outward) gives inward acceleration.
-        return aRadial * rHat + aTangential * phiHat
+        // Both terms are negative (inward). Multiplying by outward r̂ gives
+        // an acceleration vector pointing toward the source.
+        return (aNewton + aGR) * rHat
     }
 
     // MARK: - Simulation Step

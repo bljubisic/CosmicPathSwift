@@ -262,7 +262,7 @@ struct SimulationCanvasView: View {
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.red.opacity(0.3))
                     } else {
-                        Text("a = -GM/r\u{00B2} + L\u{00B2}/r\u{00B3} - 3GML\u{00B2}/c\u{00B2}r\u{2074}")
+                        Text("a = -GM/r\u{00B2} - 3GML\u{00B2}/c\u{00B2}r\u{2074}")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.18))
                     }
