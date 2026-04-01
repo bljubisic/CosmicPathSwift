@@ -46,6 +46,10 @@ class SimulationViewModel {
     private var engine: SimulationEngineProtocol?
     private var simulationTask: Task<Void, Never>?
     private var transformer = CoordinateTransformer(canvasSize: .zero)
+    private var currentCanvasSize: CGSize = .zero
+    /// Tracks the maximum distance any body reaches from center, used to
+    /// dynamically zoom out so the entire orbit always fits on screen.
+    private var maxExtent: Double = 0
 
     // MARK: - Init
 
@@ -92,6 +96,8 @@ class SimulationViewModel {
     /// the total momentum of the system is zero. This keeps the center of
     /// mass stationary and prevents the system from drifting across the screen.
     func setup(canvasSize: CGSize) {
+        currentCanvasSize = canvasSize
+        maxExtent = config.simulationSeparation
         transformer = CoordinateTransformer(canvasSize: canvasSize, simulationSeparation: config.simulationSeparation)
 
         let mass1 = config.simulationMass1
@@ -162,7 +168,8 @@ class SimulationViewModel {
 
     /// Updates the coordinate transformer when the canvas is resized without disturbing the simulation.
     func resizeCanvas(_ size: CGSize) {
-        transformer = CoordinateTransformer(canvasSize: size, simulationSeparation: config.simulationSeparation)
+        currentCanvasSize = size
+        transformer = CoordinateTransformer(canvasSize: size, simulationSeparation: maxExtent)
         syncState()
     }
 
@@ -182,8 +189,23 @@ class SimulationViewModel {
     }
 
     /// Syncs positions, trails, and metrics from the engine to observable state.
+    /// Dynamically zooms out if any body moves beyond the current view extent.
     private func syncState() {
         guard let engine else { return }
+
+        // Track the farthest any body reaches from center.
+        // If it exceeds the current extent, rebuild the transformer to zoom out.
+        let extent1 = engine.body1.position.magnitude
+        let extent2 = engine.body2.position.magnitude
+        let currentMax = max(extent1, extent2)
+
+        if currentMax > maxExtent {
+            maxExtent = currentMax
+            transformer = CoordinateTransformer(
+                canvasSize: currentCanvasSize,
+                simulationSeparation: maxExtent
+            )
+        }
 
         body1Position = transformer.simulationToCanvas(engine.body1.position)
         body2Position = transformer.simulationToCanvas(engine.body2.position)
