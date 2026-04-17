@@ -8,9 +8,23 @@
 
 import SwiftUI
 
+/// Visual effects rendered around body1 when it is classified as a black hole.
+///
+/// These effects are purely cosmetic — they do not affect the physics simulation.
+/// Layers (back to front):
+/// 1. **Lensing glow**: A faint radial gradient extending to 5×rₛ, simulating
+///    the light-bending halo seen around real black holes.
+/// 2. **Accretion disk**: Concentric ellipses (viewed at an angle) ranging from
+///    1.5×rₛ (photon sphere) to 4×rₛ. Inner rings are brighter and bluer (hotter),
+///    outer rings are dimmer and redder (cooler).
+/// 3. **ISCO ring**: A faint dashed circle at 3×rₛ (6GM/c²), marking the
+///    innermost stable circular orbit.
+/// 4. **Photon sphere ring**: A dashed circle at 1.5×rₛ (3GM/c²), marking where
+///    photons orbit unstably.
 struct BlackHoleEffectsView: View {
     let viewModel: SimulationViewModel
 
+    /// Schwarzschild radius converted from simulation units to canvas pixels.
     private var rs: CGFloat {
         CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
     }
@@ -26,6 +40,8 @@ struct BlackHoleEffectsView: View {
 
     // MARK: - Gravitational Lensing Glow
 
+    /// Faint radial glow centered on the black hole, simulating gravitational lensing
+    /// of background light. Extends from rₛ to 5×rₛ with decreasing opacity.
     private var lensingGlow: some View {
         Circle()
             .fill(
@@ -49,6 +65,10 @@ struct BlackHoleEffectsView: View {
 
     // MARK: - Accretion Disk
 
+    /// Draws concentric ellipses representing a tilted accretion disk.
+    /// The ellipses have a 0.3 height-to-width ratio to simulate a disk viewed
+    /// at ~70° inclination. 12 rings span from 1.5×rₛ to 4×rₛ, transitioning
+    /// from yellow (hot inner edge) through orange to red (cooler outer edge).
     private var accretionDisk: some View {
         Canvas { context, _ in
             let center = viewModel.body1Position
@@ -79,6 +99,8 @@ struct BlackHoleEffectsView: View {
 
     // MARK: - ISCO Ring
 
+    /// Dashed yellow circle at the ISCO radius (3×rₛ = 6GM/c²).
+    /// Orbits inside this radius are unstable — any perturbation causes a plunge.
     private var iscoRing: some View {
         Circle()
             .stroke(
@@ -94,6 +116,9 @@ struct BlackHoleEffectsView: View {
 
     // MARK: - Photon Sphere Ring
 
+    /// Dashed orange circle at the photon sphere radius (1.5×rₛ = 3GM/c²).
+    /// Photons can orbit here in unstable circular paths; inside this radius,
+    /// even light spirals inward.
     private var photonSphereRing: some View {
         Circle()
             .stroke(

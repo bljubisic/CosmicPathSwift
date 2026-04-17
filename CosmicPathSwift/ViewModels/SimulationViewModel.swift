@@ -97,8 +97,10 @@ class SimulationViewModel {
     /// mass stationary and prevents the system from drifting across the screen.
     func setup(canvasSize: CGSize) {
         currentCanvasSize = canvasSize
-        maxExtent = config.simulationSeparation
-        transformer = CoordinateTransformer(canvasSize: canvasSize, simulationSeparation: config.simulationSeparation)
+        // Reserve 30% extra room beyond the initial separation so the full orbit
+        // (which can be eccentric) fits on screen without waiting for dynamic zoom.
+        maxExtent = config.simulationSeparation * 1.3
+        transformer = CoordinateTransformer(canvasSize: canvasSize, simulationSeparation: maxExtent)
 
         let mass1 = config.simulationMass1
         let mass2 = config.simulationMass2

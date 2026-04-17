@@ -8,9 +8,29 @@
 
 import SwiftUI
 
+/// Control panel providing simulation playback buttons and parameter sliders.
+///
+/// ## Layout Modes
+///
+/// - `showParameterControls = true` (portrait): Shows black hole toggle and
+///   logarithmic sliders for star mass, planet mass, and orbital distance.
+/// - `showParameterControls = false` (landscape): Shows only play/pause and
+///   reset buttons to maximize canvas space.
+///
+/// ## Slider Behavior
+///
+/// Sliders use a logarithmic scale so that the default value (1.0) sits at the
+/// visual center of the slider. Each slider change triggers `applyConfigChange`
+/// which reinitializes the simulation with the new parameters.
+///
+/// ## Black Hole Mode Toggle
+///
+/// Switching to black hole mode resets the mass and separation to defaults
+/// appropriate for visible event horizon effects (see `CelestialConstants`).
 struct ControlPanelView: View {
     @Bindable var viewModel: SimulationViewModel
     let canvasSize: CGSize
+    /// When false, hides the black hole toggle and parameter sliders (landscape mode).
     var showParameterControls: Bool = true
 
     var body: some View {
@@ -69,26 +89,26 @@ struct ControlPanelView: View {
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
 
-                // Parameter sliders
+                // Parameter sliders (logarithmic scale, default 1.0 centered)
                 VStack(spacing: 8) {
-                    parameterSlider(
+                    logSlider(
                         label: viewModel.config.isBlackHoleMode ? "BH Mass" : "Star Mass",
                         value: $viewModel.config.mass1Multiplier,
-                        range: 0.1...100,
+                        range: 0.1...10,
                         color: viewModel.config.isBlackHoleMode ? .red : .orange,
                         displayText: viewModel.config.mass1Label
                     )
-                    parameterSlider(
+                    logSlider(
                         label: "Planet Mass",
                         value: $viewModel.config.mass2Multiplier,
-                        range: 0.1...100,
+                        range: 0.1...10,
                         color: .cyan,
                         displayText: viewModel.config.mass2Label
                     )
-                    parameterSlider(
+                    logSlider(
                         label: "Distance",
                         value: $viewModel.config.separationAU,
-                        range: 0.3...3.0,
+                        range: (1.0 / 3.0)...3.0,
                         color: .white,
                         displayText: viewModel.config.separationLabel
                     )
@@ -114,21 +134,45 @@ struct ControlPanelView: View {
         }
     }
 
-    // MARK: - Slider Helper
+    // MARK: - Logarithmic Slider
 
-    private func parameterSlider(
+    /// A slider that maps a linear 0...1 thumb position to a logarithmic value range.
+    ///
+    /// ## Why Logarithmic?
+    ///
+    /// Physical parameters like mass span orders of magnitude (0.1× to 10×).
+    /// A linear slider would compress the useful 0.5–2.0 range into a tiny portion
+    /// of the track. The log mapping ensures equal thumb travel for equal multiplicative
+    /// changes: moving from 1× to 2× takes the same distance as 2× to 4×.
+    ///
+    /// The default value (1.0) sits at the geometric center of the range when
+    /// `min × max = 1.0` (e.g. 0.1...10), so the thumb starts in the middle.
+    private func logSlider(
         label: String,
         value: Binding<Double>,
         range: ClosedRange<Double>,
         color: Color,
         displayText: String
     ) -> some View {
-        HStack {
+        let logMin = log(range.lowerBound)
+        let logMax = log(range.upperBound)
+
+        let normalizedBinding = Binding<Double>(
+            get: {
+                let clamped = min(max(value.wrappedValue, range.lowerBound), range.upperBound)
+                return (log(clamped) - logMin) / (logMax - logMin)
+            },
+            set: { normalized in
+                value.wrappedValue = exp(logMin + normalized * (logMax - logMin))
+            }
+        )
+
+        return HStack {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.7))
                 .frame(width: 90, alignment: .leading)
-            Slider(value: value, in: range)
+            Slider(value: normalizedBinding, in: 0...1)
                 .tint(color)
             Text(displayText)
                 .font(.caption.monospacedDigit())
