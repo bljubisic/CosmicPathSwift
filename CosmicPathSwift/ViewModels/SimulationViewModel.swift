@@ -204,6 +204,7 @@ class SimulationViewModel {
 
         let minExtent = config.simulationSeparation * CelestialConstants.orbitMarginFactor
         let targetExtent = max(currentMax * 1.1, minExtent)
+        let previousExtent = maxExtent
 
         if targetExtent > maxExtent {
             // Zoom out immediately to keep bodies on screen
@@ -214,10 +215,12 @@ class SimulationViewModel {
             maxExtent = max(targetExtent, maxExtent * decayRate)
         }
 
-        transformer = CoordinateTransformer(
-            canvasSize: currentCanvasSize,
-            simulationSeparation: maxExtent
-        )
+        if maxExtent != previousExtent {
+            transformer = CoordinateTransformer(
+                canvasSize: currentCanvasSize,
+                simulationSeparation: maxExtent
+            )
+        }
 
         body1Position = transformer.simulationToCanvas(engine.body1.position)
         body2Position = transformer.simulationToCanvas(engine.body2.position)
