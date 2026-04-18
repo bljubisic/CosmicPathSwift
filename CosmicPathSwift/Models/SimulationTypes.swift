@@ -8,65 +8,111 @@
 //  This file contains no physics logic — only data structures.
 //  All physics computations are in SimulationEngineProtocol.swift.
 //
+//  ## 3D Coordinate System
+//
+//  The simulation operates in a right-handed 3D coordinate system:
+//    • x-axis: initial radial direction (body2 starts here)
+//    • y-axis: tangential direction (initial orbital velocity)
+//    • z-axis: out of the orbital plane (non-zero for inclined orbits)
+//
+//  At zero inclination the orbit lies entirely in the x-y plane and
+//  matches the original 2D behavior. Non-zero inclination rotates the
+//  initial velocity out of the x-y plane, creating a tilted orbit.
+//
 
 import Foundation
 import SwiftUI
 
-// MARK: - Vector2D
+// MARK: - Vector3D
 
-/// A 2D vector used for positions, velocities, and forces.
-struct Vector2D: Equatable {
+/// A 3D vector used for positions, velocities, and forces in the simulation.
+///
+/// Replaces the former `Vector2D` now that orbits are computed in full
+/// 3D space. The cross-product operation is essential for computing the
+/// specific angular momentum L = r × v used in the Schwarzschild GR
+/// correction term -3GML²/(c²r⁴).
+struct Vector3D: Equatable {
     var x: Double
     var y: Double
+    var z: Double
 
-    static let zero = Vector2D(x: 0, y: 0)
+    static let zero = Vector3D(x: 0, y: 0, z: 0)
 
-    static func + (lhs: Vector2D, rhs: Vector2D) -> Vector2D {
-        Vector2D(x: lhs.x + rhs.x, y: lhs.y + rhs.y)
+    static func + (lhs: Vector3D, rhs: Vector3D) -> Vector3D {
+        Vector3D(x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z)
     }
 
-    static func - (lhs: Vector2D, rhs: Vector2D) -> Vector2D {
-        Vector2D(x: lhs.x - rhs.x, y: lhs.y - rhs.y)
+    static func - (lhs: Vector3D, rhs: Vector3D) -> Vector3D {
+        Vector3D(x: lhs.x - rhs.x, y: lhs.y - rhs.y, z: lhs.z - rhs.z)
     }
 
-    static func * (scalar: Double, vec: Vector2D) -> Vector2D {
-        Vector2D(x: scalar * vec.x, y: scalar * vec.y)
+    /// Negation: returns a vector pointing in the opposite direction.
+    static prefix func - (vec: Vector3D) -> Vector3D {
+        Vector3D(x: -vec.x, y: -vec.y, z: -vec.z)
     }
 
-    static func * (vec: Vector2D, scalar: Double) -> Vector2D {
-        Vector2D(x: vec.x * scalar, y: vec.y * scalar)
+    /// Scalar multiplication (scalar on the left).
+    static func * (scalar: Double, vec: Vector3D) -> Vector3D {
+        Vector3D(x: scalar * vec.x, y: scalar * vec.y, z: scalar * vec.z)
     }
 
-    /// Dot product of two vectors.
-    func dot(_ other: Vector2D) -> Double {
-        x * other.x + y * other.y
+    /// Scalar multiplication (scalar on the right).
+    static func * (vec: Vector3D, scalar: Double) -> Vector3D {
+        Vector3D(x: vec.x * scalar, y: vec.y * scalar, z: vec.z * scalar)
+    }
+
+    /// Dot product: returns the scalar projection of one vector onto another.
+    func dot(_ other: Vector3D) -> Double {
+        x * other.x + y * other.y + z * other.z
+    }
+
+    /// Cross product: returns a vector perpendicular to both `self` and `other`.
+    ///
+    /// The magnitude |self × other| equals the specific angular momentum L
+    /// for an orbiting body (|r × v|), which is conserved in central-force
+    /// motion and enters the Schwarzschild GR correction term L².
+    func cross(_ other: Vector3D) -> Vector3D {
+        Vector3D(
+            x: y * other.z - z * other.y,
+            y: z * other.x - x * other.z,
+            z: x * other.y - y * other.x
+        )
     }
 
     var magnitudeSquared: Double {
-        x * x + y * y
+        x * x + y * y + z * z
     }
 
     var magnitude: Double {
         sqrt(magnitudeSquared)
     }
 
-    var normalized: Vector2D {
+    /// Returns a unit vector in the same direction, or `.zero` if the magnitude is zero.
+    var normalized: Vector3D {
         let mag = magnitude
         guard mag > 0 else { return .zero }
-        return Vector2D(x: x / mag, y: y / mag)
+        return Vector3D(x: x / mag, y: y / mag, z: z / mag)
     }
 }
 
 // MARK: - CelestialBody
 
 /// Represents a celestial body with mass, position, velocity, and a trail of past positions.
+///
+/// All kinematic quantities are 3D vectors, enabling fully inclined orbits.
+/// The trail stores the body's recent history in simulation space; it is
+/// projected to canvas space by `CoordinateTransformer` before rendering.
 struct CelestialBody {
     var mass: Double
-    var position: Vector2D
-    var velocity: Vector2D
-    var acceleration: Vector2D = .zero
-    var trail: [Vector2D] = []
+    var position: Vector3D
+    var velocity: Vector3D
+    var acceleration: Vector3D = .zero
 
+    /// Simulation-space positions from recent frames, newest at the end.
+    /// Capped at `maxTrailLength` to bound memory usage.
+    var trail: [Vector3D] = []
+
+    /// Maximum number of trail positions to retain.
     static let maxTrailLength = 800
 }
 
@@ -117,13 +163,16 @@ struct RelativisticMetrics {
     /// each orbit due to the -3GML²/(c²r⁴) curvature term. For Mercury, this
     /// is 43 arcseconds/century. In our scaled simulation, precession is much
     /// larger and visually apparent as a rosette orbit pattern.
+    ///
+    /// For inclined orbits, this is measured as the angle in the x-y projection;
+    /// it approximates the true in-plane precession for small inclinations.
     var precessionAngle: Double = 0
 
     /// Speed of the orbiting body as a fraction of c (β = v/c).
     /// Ranges from 0 (stationary) to approaching 1 (near light speed).
     var velocityFractionOfC: Double = 0
 
-    /// Current distance between the two bodies in simulation units.
+    /// Current 3D distance between the two bodies in simulation units.
     var separation: Double = 0
 
     /// Lorentz factor: γ = 1/√(1 - v²/c²).
@@ -166,6 +215,11 @@ struct RelativisticMetrics {
             return .red
         }
     }
+    /// Number of complete orbits body2 has completed, incremented each time
+    /// the engine detects a perihelion passage (local minimum in separation).
+    /// A Newtonian orbit increments this once per revolution; GR precession
+    /// shifts the perihelion each orbit, but the count is still exact.
+    var orbitsCompleted: Int = 0
 }
 
 // MARK: - Celestial Constants
@@ -234,9 +288,8 @@ enum CelestialConstants {
 /// Configuration for the initial simulation parameters.
 ///
 /// Users adjust dimensionless multipliers (mass1Multiplier, mass2Multiplier,
-/// separationAU) through UI sliders. These are converted to simulation-scale
-/// values via the computed properties, which multiply by the base constants
-/// in `CelestialConstants`.
+/// separationAU, inclinationDeg) through UI sliders. These are converted to
+/// simulation-scale values via the computed properties.
 struct SimulationConfig: Equatable {
     /// Multiplier for the central body mass in units of M☉ (solar masses).
     /// The simulation mass is `baseSolarMass × mass1Multiplier` (or
@@ -250,6 +303,17 @@ struct SimulationConfig: Equatable {
     /// Orbital separation in astronomical units (AU).
     /// The simulation separation in pixels is `baseAU × separationAU`.
     var separationAU: Double = 1.0
+
+    /// Orbital inclination in degrees relative to the x-y plane.
+    ///
+    /// At 0° the orbit lies flat in the x-y plane (matching the original 2D
+    /// behavior). At 90° the orbit is polar — perpendicular to the default
+    /// viewing plane. The inclination rotates the initial tangential velocity
+    /// out of the x-y plane, producing a tilted Schwarzschild geodesic.
+    ///
+    /// Range: 0° to 90°. Use the camera drag gesture to appreciate the 3D
+    /// structure of inclined orbits.
+    var inclinationDeg: Double = 0.0
 
     /// Whether to use the black hole mass range for body1.
     /// When true, body1's base mass switches from `baseSolarMass` (200) to
@@ -265,6 +329,8 @@ struct SimulationConfig: Equatable {
     /// At 60 fps with 4 steps/frame, the simulation advances 4×0.02 = 0.08
     /// time units per rendered frame.
     var stepsPerFrame: Int = 4
+
+    // MARK: - Derived Simulation Values
 
     /// The simulation mass for body 1 (central body).
     var simulationMass1: Double {
@@ -283,6 +349,13 @@ struct SimulationConfig: Equatable {
     var simulationSeparation: Double {
         return CelestialConstants.baseAU * separationAU
     }
+
+    /// Orbital inclination converted to radians for physics calculations.
+    var inclinationRad: Double {
+        inclinationDeg * .pi / 180.0
+    }
+
+    // MARK: - Display Labels
 
     /// Formatted display string for body 1 mass.
     var mass1Label: String {
@@ -306,12 +379,17 @@ struct SimulationConfig: Equatable {
         }
     }
 
-    /// Formatted display string for separation.
+    /// Formatted display string for orbital separation.
     var separationLabel: String {
         if separationAU < 10 {
             return String(format: "%.1f AU", separationAU)
         } else {
             return String(format: "%.0f AU", separationAU)
         }
+    }
+
+    /// Formatted display string for orbital inclination.
+    var inclinationLabel: String {
+        String(format: "%.0f°", inclinationDeg)
     }
 }

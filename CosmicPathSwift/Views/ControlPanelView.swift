@@ -3,7 +3,17 @@
 //  CosmicPathSwift
 //
 //  Simulation controls: start/pause, reset, black hole mode toggle,
-//  and parameter sliders for mass and separation.
+//  and parameter sliders for mass, separation, and orbital inclination.
+//
+//  ## Inclination Slider
+//
+//  The inclination slider (0° – 90°) sets the tilt of the orbital plane
+//  relative to the default x-y plane. At 0° the orbit is flat (original 2D
+//  behaviour). At 90° the orbit is polar. Changes trigger `applyConfigChange`
+//  which restarts the simulation with the updated 3D initial conditions.
+//
+//  To appreciate an inclined orbit, drag the canvas to rotate the camera
+//  (horizontal drag = azimuth, vertical drag = elevation).
 //
 
 import SwiftUI
@@ -89,7 +99,7 @@ struct ControlPanelView: View {
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
 
-                // Parameter sliders (logarithmic scale, default 1.0 centered)
+                // Parameter sliders (mass/distance use log scale; inclination uses linear)
                 VStack(spacing: 8) {
                     logSlider(
                         label: viewModel.config.isBlackHoleMode ? "BH Mass" : "Star Mass",
@@ -112,6 +122,22 @@ struct ControlPanelView: View {
                         color: .white,
                         displayText: viewModel.config.separationLabel
                     )
+
+                    // Inclination: linear 0°–90° slider.
+                    // Tilts the orbital plane out of the x-y plane. Drag the
+                    // canvas to rotate the camera and see the 3D structure.
+                    HStack {
+                        Text("Inclination")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 90, alignment: .leading)
+                        Slider(value: $viewModel.config.inclinationDeg, in: 0...90)
+                            .tint(.purple)
+                        Text(viewModel.config.inclinationLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 70, alignment: .trailing)
+                    }
                 }
                 .disabled(viewModel.isRunning)
                 .opacity(viewModel.isRunning ? 0.5 : 1.0)
@@ -122,6 +148,9 @@ struct ControlPanelView: View {
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
                 .onChange(of: viewModel.config.separationAU) { _, _ in
+                    viewModel.applyConfigChange(canvasSize: canvasSize)
+                }
+                .onChange(of: viewModel.config.inclinationDeg) { _, _ in
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
 

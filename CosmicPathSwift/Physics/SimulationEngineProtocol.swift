@@ -58,6 +58,18 @@
 //  integrator, which is second-order accurate and conserves energy
 //  over long timescales — essential for stable orbital simulations.
 //
+//  ## 3D Extension
+//
+//  The physics generalises directly from 2D to 3D:
+//    • All position/velocity/acceleration quantities are now `Vector3D`.
+//    • The specific angular momentum L = |r × v| uses the full 3D cross
+//      product. In 2D only the z-component was needed; in 3D inclined
+//      orbits all three components contribute.
+//    • The radial acceleration formula a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
+//      is unchanged — it is purely radial in any dimension.
+//    • The Velocity-Verlet integrator is unchanged; it applies the 3D
+//      vectors without modification.
+//
 
 import Foundation
 
@@ -88,10 +100,8 @@ protocol SimulationEngineProtocol: AnyObject {
 ///
 ///     a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
 ///
-/// where L = |r × v| is the specific orbital angular momentum and r̂ points
-/// outward from the source. The centrifugal term L²/r³ from the polar
-/// geodesic equation is not applied explicitly — the Cartesian Velocity-Verlet
-/// integrator handles it naturally through tangential velocity.
+/// where L = |r × v| is the specific orbital angular momentum (full 3D
+/// cross-product magnitude) and r̂ points outward from the source.
 ///
 /// For the two-body case, each body moves on the geodesic of the other
 /// body's Schwarzschild metric, with accelerations scaled by the
@@ -137,15 +147,16 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     // term -3GML²/(c²r⁴) causes the perihelion (closest approach point) to
     // advance each orbit. We detect perihelion passages by monitoring when the
     // separation stops decreasing, then measure the angular shift between
-    // successive perihelion positions. This accumulated angular excess is the
-    // perihelion precession — the same effect famously measured for Mercury
-    // (43 arcseconds/century).
+    // successive perihelion positions.
+    //
+    // For inclined orbits, the angle is measured in the x-y projection. This
+    // approximates the true in-plane precession for small inclinations.
 
     /// Previous frame's body separation, used to detect perihelion (local minimum)
     private var previousSeparation: Double = .infinity
     /// Whether the separation was decreasing last frame
     private var wasShrinking: Bool = true
-    /// Angle (radians) of the most recent perihelion passage
+    /// Angle (radians) of the most recent perihelion passage, measured in x-y plane
     private var lastPerihelionAngle: Double?
     /// Total accumulated precession in radians (converted to degrees in metrics)
     private var accumulatedPrecession: Double = 0
@@ -186,17 +197,17 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// (outward from the gravitating center). This convention means the Newtonian
     /// term (-GM/r²) produces inward acceleration when multiplied by the outward r̂.
     ///
-    /// - Returns: A tuple (a1, a2) of acceleration vectors in simulation coordinates.
+    /// - Returns: A tuple (a1, a2) of 3D acceleration vectors in simulation coordinates.
     static func computeAccelerations(
         body1: CelestialBody,
         body2: CelestialBody
-    ) -> (Vector2D, Vector2D) {
+    ) -> (Vector3D, Vector3D) {
         let r12 = body2.position - body1.position
         let dist = max(r12.magnitude, softening)
         let rHat = r12.normalized
 
-        // Acceleration on body2 from body1's gravity (geodesic of body1's metric)
-        // separation points from source (body1) to body (body2) = r12
+        // Acceleration on body2 from body1's gravity (geodesic of body1's metric).
+        // Separation points from source (body1) to body (body2) = r12.
         let a2 = schwarzschildAcceleration(
             sourceMass: body1.mass,
             separation: r12,
@@ -205,13 +216,13 @@ class GravitySimulationEngine: SimulationEngineProtocol {
             velocity: body2.velocity
         )
 
-        // Acceleration on body1 from body2's gravity (geodesic of body2's metric)
-        // separation points from source (body2) to body (body1) = -r12
+        // Acceleration on body1 from body2's gravity (geodesic of body2's metric).
+        // Separation points from source (body2) to body (body1) = -r12.
         let a1 = schwarzschildAcceleration(
             sourceMass: body2.mass,
-            separation: Vector2D(x: -r12.x, y: -r12.y),
+            separation: -r12,
             distance: dist,
-            rHat: Vector2D(x: -rHat.x, y: -rHat.y),
+            rHat: -rHat,
             velocity: body1.velocity
         )
 
@@ -227,61 +238,50 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     ///
     ///     d²r/dt² = -GM/r² + L²/r³ - 3GML²/(c²r⁴)
     ///
-    /// where r is the radial coordinate and L is the specific angular momentum.
-    /// However, `d²r/dt²` is NOT the radial component of Cartesian acceleration.
-    /// In polar coordinates, the Cartesian radial acceleration aᵣ relates to
-    /// the radial coordinate acceleration r̈ by:
+    /// where L = |r × v| is the specific angular momentum (full 3D magnitude).
+    /// Converting from polar radial acceleration r̈ to Cartesian acceleration aᵣ:
     ///
-    ///     r̈ = aᵣ + r·φ̇² = aᵣ + L²/r³
+    ///     aᵣ = r̈ - L²/r³ = -GM/r² - 3GML²/(c²r⁴)
     ///
-    /// Solving for the Cartesian acceleration:
+    /// The centrifugal term L²/r³ cancels out — the Cartesian Velocity-Verlet
+    /// integrator handles it naturally via tangential velocity.
     ///
-    ///     aᵣ = r̈ - L²/r³ = -GM/r² + L²/r³ - 3GML²/(c²r⁴) - L²/r³
-    ///        = -GM/r² - 3GML²/(c²r⁴)
-    ///
-    /// The centrifugal term L²/r³ cancels out — it is a coordinate artifact of
-    /// polar decomposition. The Cartesian Velocity-Verlet integrator naturally
-    /// produces the centrifugal effect through the tangential velocity component.
-    /// Similarly, the Coriolis term (-2ṙφ̇) is handled implicitly.
-    ///
-    /// ## Cartesian Acceleration
-    ///
-    /// The acceleration applied in Cartesian coordinates is purely radial:
+    /// ## Cartesian Acceleration (same formula in 2D and 3D)
     ///
     ///     a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
     ///
-    /// - **-GM/r²**: Newtonian gravity (always inward)
-    /// - **-3GML²/(c²r⁴)**: GR curvature correction from the Schwarzschild metric.
-    ///   This term has no Newtonian analogue. It deepens the effective potential
-    ///   at small r, causing perihelion precession, the ISCO, and plunge orbits.
-    ///
-    /// Since r̂ points outward (from source to body) and both terms are negative,
-    /// the resulting acceleration vector points inward (toward the source).
+    /// - **-GM/r²**: Newtonian gravity (always inward, both 2D and 3D).
+    /// - **-3GML²/(c²r⁴)**: GR curvature correction. L = |r × v| now uses the
+    ///   full 3D cross product, correctly capturing angular momentum for
+    ///   inclined orbits where the angular momentum vector is not purely along z.
     ///
     /// - Parameters:
-    ///   - M: Mass of the gravitating source.
-    ///   - r: Separation vector pointing **from the source to the body** (outward).
+    ///   - sourceMass: Mass of the gravitating source.
+    ///   - separation: Vector pointing **from the source to the body** (outward).
     ///   - dist: Scalar distance between the bodies (clamped to softening minimum).
-    ///   - rHat: Unit vector along r (from source to body).
-    ///   - v: Velocity of the body being accelerated.
-    /// - Returns: Acceleration vector in Cartesian simulation coordinates.
+    ///   - rHat: Unit vector along separation (from source to body).
+    ///   - velocity: Velocity of the body being accelerated.
+    /// - Returns: 3D acceleration vector in Cartesian simulation coordinates.
     private static func schwarzschildAcceleration(
         sourceMass M: Double,
-        separation r: Vector2D,
+        separation r: Vector3D,
         distance dist: Double,
-        rHat: Vector2D,
-        velocity v: Vector2D
-    ) -> Vector2D {
+        rHat: Vector3D,
+        velocity v: Vector3D
+    ) -> Vector3D {
         let GM = G * M
         let r2 = dist * dist
         let r4 = r2 * r2
 
-        // Specific angular momentum: L = |r × v| (z-component in 2D)
-        let L = abs(r.x * v.y - r.y * v.x)
+        // Specific angular momentum: L = |r × v| using the full 3D cross product.
+        // In 2D this reduced to the z-component abs(rx*vy - ry*vx). In 3D,
+        // inclined orbits have angular momentum with components along all axes,
+        // all of which contribute to L and hence to the GR correction.
+        let L = r.cross(v).magnitude
         let L2 = L * L
 
         // Cartesian radial acceleration:
-        //   a = -GM/r² - 3GML²/(c²r⁴)
+        //   a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
         // The centrifugal term L²/r³ from the polar geodesic equation is NOT
         // included — it cancels when converting to Cartesian coordinates because
         // the Velocity-Verlet integrator handles it implicitly via tangential velocity.
@@ -309,18 +309,12 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// critical for orbital simulations where energy drift would cause orbits
     /// to artificially spiral inward or outward.
     ///
-    /// ## Post-Integration Steps
-    ///
-    /// After integration, the method:
-    /// - Checks for event horizon absorption (black hole mode only)
-    /// - Accumulates proper time from the Schwarzschild metric
-    /// - Records orbital trail positions
-    /// - Tracks perihelion passages for precession measurement
-    /// - Updates all relativistic metrics
+    /// The same algorithm applies unchanged to 3D; all quantities are
+    /// now `Vector3D` and the arithmetic operators extend naturally.
     func step(dt: Double) {
         guard !metrics.isAbsorbed else { return }
 
-        // Velocity-Verlet position update
+        // Velocity-Verlet position update (works identically for 3D vectors)
         body1.position = body1.position + body1.velocity * dt + 0.5 * body1.acceleration * (dt * dt)
         body2.position = body2.position + body2.velocity * dt + 0.5 * body2.acceleration * (dt * dt)
 
@@ -335,7 +329,8 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         body1.velocity = body1.velocity + 0.5 * (oldA1 + newA1) * dt
         body2.velocity = body2.velocity + 0.5 * (oldA2 + newA2) * dt
 
-        // Check for absorption past the event horizon (only in black hole mode)
+        // Check for absorption past the event horizon (only in black hole mode).
+        // The separation is the full 3D distance, so inclined orbits are handled correctly.
         let rs = 2.0 * Self.G * body1.mass / Self.cSquared
         let sep = (body2.position - body1.position).magnitude
         if isBlackHoleMode && rs >= Self.blackHoleThreshold && sep <= rs {
@@ -353,7 +348,7 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         let metricFactor = max(1.0 - rsOverR - v2OverC2, 0.001)
         accumulatedProperTime += dt * sqrt(metricFactor)
 
-        // Record trail
+        // Record 3D trail positions
         body1.trail.append(body1.position)
         body2.trail.append(body2.position)
         if body1.trail.count > CelestialBody.maxTrailLength {
@@ -377,20 +372,21 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// decreasing to increasing — i.e., a local minimum in r(t). We detect this
     /// by monitoring the sign change in dr/dt.
     ///
-    /// At each perihelion, we record the angular position θ = atan2(y, x). The
-    /// angular difference between successive perihelions should be exactly 2π
+    /// At each perihelion, we record the angular position θ = atan2(y, x) in the
+    /// x-y plane. For flat orbits (inclination = 0°) this is the exact in-plane
+    /// angle. For inclined orbits it is the projection onto the x-y plane, which
+    /// approximates the true in-plane precession for small inclinations.
+    ///
+    /// The angular difference between successive perihelions should be exactly 2π
     /// for a closed Newtonian orbit. Any excess (δθ - 2π) is the perihelion
     /// precession per orbit caused by the GR correction term -3GML²/(c²r⁴).
-    ///
-    /// For Mercury, this precession is 43 arcseconds per century. In our
-    /// scaled simulation with stronger GR effects, precession is much larger
-    /// and visually apparent as a rosette-shaped orbit pattern.
     private func trackPrecession() {
         let r = body2.position - body1.position
         let currentSep = r.magnitude
         let isShrinking = currentSep < previousSeparation
 
         if wasShrinking && !isShrinking {
+            // Project onto x-y plane for angle measurement
             let angle = atan2(r.y, r.x)
 
             if let lastAngle = lastPerihelionAngle {
@@ -414,28 +410,22 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// ## Computed Quantities
     ///
     /// - **Schwarzschild radius** rₛ = 2GM/c²: The event horizon radius.
-    ///   Objects crossing this boundary cannot escape.
     ///
-    /// - **Photon sphere** rₚₕ = 1.5 rₛ = 3GM/c²: The radius where photons
-    ///   can orbit in unstable circular paths. Inside this radius, even
-    ///   light must spiral inward.
+    /// - **Photon sphere** rₚₕ = 1.5 rₛ = 3GM/c²: Unstable photon orbit radius.
     ///
-    /// - **ISCO** rᵢₛ = 3 rₛ = 6GM/c²: The innermost stable circular orbit.
-    ///   Below this radius, no stable circular orbit exists and any
-    ///   perturbation causes a plunge into the black hole.
+    /// - **ISCO** rᵢₛ = 3 rₛ = 6GM/c²: Innermost stable circular orbit.
     ///
     /// - **Gravitational time dilation** √(1 - rₛ/r): From the g₀₀ component
-    ///   of the Schwarzschild metric. A clock at distance r runs slower
-    ///   than one at infinity by this factor. Approaches 0 at the event horizon.
+    ///   of the Schwarzschild metric.
     ///
-    /// - **Lorentz gamma** γ = 1/√(1 - v²/c²): The special-relativistic
-    ///   Lorentz factor for the orbiting body's velocity.
+    /// - **Lorentz gamma** γ = 1/√(1 - v²/c²): The special-relativistic factor.
     ///
-    /// - **Precession angle**: Total accumulated perihelion advance in degrees.
+    /// - **Precession angle**: Accumulated perihelion advance in degrees.
     ///
-    /// - **Proper time**: Total elapsed proper time τ of the orbiting body,
-    ///   always less than coordinate time due to combined gravitational
-    ///   and velocity time dilation.
+    /// - **Proper time**: Total elapsed proper time τ of the orbiting body.
+    ///
+    /// All distance quantities use the full 3D separation `|r1 - r2|`, so
+    /// inclined orbits are handled correctly.
     private func updateMetrics() {
         let r = (body2.position - body1.position).magnitude
         let v2Speed = body2.velocity.magnitude
@@ -463,5 +453,7 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         metrics.precessionAngle = accumulatedPrecession * 180.0 / .pi
         metrics.separation = r
         metrics.properTime = accumulatedProperTime
+        // Expose the perihelion passage counter so the UI can display orbit count
+        metrics.orbitsCompleted = orbitsCompleted
     }
 }
