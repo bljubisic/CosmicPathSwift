@@ -5,6 +5,17 @@
 //  Canvas rendering: warped spacetime grid, orbital trails, celestial bodies
 //  (star or black hole), Schwarzschild ring, formula overlay, and absorption state.
 //
+//  ## Camera Control (3D)
+//
+//  The view captures drag gestures to rotate the orthographic 3D camera:
+//    • Horizontal drag → azimuth  (scene rotates left / right)
+//    • Vertical drag   → elevation (scene tilts up / down, clamped ±90°)
+//
+//  On each drag change the view computes the translation delta relative to
+//  the previous event and forwards it to `viewModel.rotateCamera(_:_:)`,
+//  which rebuilds the `CoordinateTransformer` and re-projects all positions.
+//  The `previousDragTranslation` state is reset to `.zero` on gesture end.
+//
 
 import SwiftUI
 
@@ -29,6 +40,16 @@ import SwiftUI
 struct SimulationCanvasView: View {
     let viewModel: SimulationViewModel
     @Binding var canvasSize: CGSize
+
+    /// Tracks the cumulative drag translation of the current gesture so we can
+    /// compute per-event deltas. `@GestureState` automatically resets to `.zero`
+    /// when the gesture ends **or is cancelled** (e.g. when the user taps Reset
+    /// while dragging), preventing a stale offset from corrupting the next drag.
+    @GestureState private var previousDragTranslation: CGSize = .zero
+
+    /// Radians of camera rotation per screen point of drag distance.
+    /// 0.005 gives one full 360° turn in ~1257 points of horizontal drag.
+    private let cameraDragSensitivity: Double = 0.005
 
     var body: some View {
         GeometryReader { geometry in
@@ -60,8 +81,15 @@ struct SimulationCanvasView: View {
                     .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 }
 
+                // Depth-sorted body rendering: draw the farther body first so the
+                // nearer one always appears on top. Without this swap the planet
+                // would render in front of the star/black hole even when orbiting
+                // behind it from the camera's perspective.
+                if viewModel.planetIsBehindStar && !viewModel.metrics.isAbsorbed {
+                    body2View
+                }
                 body1View
-                if !viewModel.metrics.isAbsorbed {
+                if !viewModel.planetIsBehindStar && !viewModel.metrics.isAbsorbed {
                     body2View
                 }
 
@@ -79,6 +107,25 @@ struct SimulationCanvasView: View {
                 canvasSize = newSize
                 viewModel.resizeCanvas(newSize)
             }
+            // Camera rotation gesture: drag horizontally to change azimuth,
+            // vertically to change elevation. Elevation is clamped in rotateCamera().
+            //
+            // `.updating` keeps @GestureState in sync so it auto-resets to .zero
+            // on gesture end or cancellation (e.g. mid-drag Reset tap).
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .updating($previousDragTranslation) { value, state, _ in
+                        state = value.translation
+                    }
+                    .onChanged { value in
+                        let deltaX = Double(value.translation.width  - previousDragTranslation.width)
+                        let deltaY = Double(value.translation.height - previousDragTranslation.height)
+                        viewModel.rotateCamera(
+                            deltaAzimuth:   deltaX * cameraDragSensitivity,
+                            deltaElevation: deltaY * cameraDragSensitivity
+                        )
+                    }
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

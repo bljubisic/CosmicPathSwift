@@ -22,6 +22,12 @@ struct MetricsPanelView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // Num of orbits completed (integer)
+            metricItem(
+                label: "Orbits",
+                value: String(format: "%d", viewModel.metrics.orbitsCompleted),
+                color: .white
+            )
             // Gravitational time dilation: τ/t = √(1 - rₛ/r)
             metricItem(
                 label: "Time Dilation",

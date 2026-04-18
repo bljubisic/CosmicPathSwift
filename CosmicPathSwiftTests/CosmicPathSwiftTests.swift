@@ -5,6 +5,14 @@
 //  Unit tests for the simulation engine, coordinate transformer,
 //  and view model using mock engine injection.
 //
+//  ## 3D Migration Notes
+//
+//  All former `Vector2D` references have been replaced with `Vector3D`.
+//  Tests that verify coordinate projection now explicitly pass
+//  `azimuth: 0, elevation: 0` to the transformer so results are in the
+//  flat x-y plane and match the expected numerical values exactly.
+//  A separate test covers the 3D projection with non-zero elevation.
+//
 
 import Testing
 import Foundation
@@ -28,98 +36,193 @@ class MockSimulationEngine: SimulationEngineProtocol {
     func step(dt: Double) {
         stepCount += 1
         // Move body2 slightly each step to simulate motion
-        body2.position = body2.position + Vector2D(x: dt, y: 0)
+        body2.position = body2.position + Vector3D(x: dt, y: 0, z: 0)
     }
 }
 
-// MARK: - Vector2D Tests
+// MARK: - Vector3D Tests
 
-struct Vector2DTests {
+struct Vector3DTests {
     @Test func addition() {
-        let a = Vector2D(x: 1, y: 2)
-        let b = Vector2D(x: 3, y: 4)
+        let a = Vector3D(x: 1, y: 2, z: 3)
+        let b = Vector3D(x: 4, y: 5, z: 6)
         let result = a + b
-        #expect(result.x == 4)
-        #expect(result.y == 6)
+        #expect(result.x == 5)
+        #expect(result.y == 7)
+        #expect(result.z == 9)
     }
 
     @Test func subtraction() {
-        let a = Vector2D(x: 5, y: 3)
-        let b = Vector2D(x: 2, y: 1)
+        let a = Vector3D(x: 5, y: 3, z: 2)
+        let b = Vector3D(x: 2, y: 1, z: 1)
         let result = a - b
         #expect(result.x == 3)
         #expect(result.y == 2)
+        #expect(result.z == 1)
     }
 
     @Test func scalarMultiplication() {
-        let v = Vector2D(x: 2, y: 3)
+        let v = Vector3D(x: 2, y: 3, z: 4)
         let result = 2.0 * v
         #expect(result.x == 4)
         #expect(result.y == 6)
+        #expect(result.z == 8)
+    }
+
+    @Test func negation() {
+        let v = Vector3D(x: 1, y: -2, z: 3)
+        let neg = -v
+        #expect(neg.x == -1)
+        #expect(neg.y ==  2)
+        #expect(neg.z == -3)
     }
 
     @Test func dotProduct() {
-        let a = Vector2D(x: 1, y: 0)
-        let b = Vector2D(x: 0, y: 1)
-        #expect(a.dot(b) == 0) // Perpendicular
+        // Perpendicular unit vectors → dot = 0
+        let a = Vector3D(x: 1, y: 0, z: 0)
+        let b = Vector3D(x: 0, y: 1, z: 0)
+        #expect(a.dot(b) == 0)
 
-        let c = Vector2D(x: 3, y: 4)
-        let d = Vector2D(x: 3, y: 4)
-        #expect(c.dot(d) == 25) // Parallel
+        // Parallel → dot = magnitude squared
+        let c = Vector3D(x: 3, y: 4, z: 0)
+        #expect(c.dot(c) == 25)
+    }
+
+    @Test func crossProduct() {
+        // Standard basis cross products
+        let x = Vector3D(x: 1, y: 0, z: 0)
+        let y = Vector3D(x: 0, y: 1, z: 0)
+        let z = Vector3D(x: 0, y: 0, z: 1)
+
+        // x × y = z
+        let xCrossY = x.cross(y)
+        #expect(abs(xCrossY.x) < 1e-10)
+        #expect(abs(xCrossY.y) < 1e-10)
+        #expect(abs(xCrossY.z - 1.0) < 1e-10)
+
+        // y × z = x
+        let yCrossZ = y.cross(z)
+        #expect(abs(yCrossZ.x - 1.0) < 1e-10)
+        #expect(abs(yCrossZ.y) < 1e-10)
+        #expect(abs(yCrossZ.z) < 1e-10)
+
+        // Anti-commutativity: y × x = -z
+        let yCrossX = y.cross(x)
+        #expect(abs(yCrossX.z + 1.0) < 1e-10)
+    }
+
+    @Test func crossProductMagnitudeIsAngularMomentum() {
+        // For a circular orbit in the x-y plane:
+        // r = (r, 0, 0), v = (0, v, 0) → L = |r × v| = r*v
+        let r: Double = 150
+        let v: Double = 25
+        let pos = Vector3D(x: r, y: 0, z: 0)
+        let vel = Vector3D(x: 0, y: v, z: 0)
+        let L = pos.cross(vel).magnitude
+        #expect(abs(L - r * v) < 1e-10)
     }
 
     @Test func magnitude() {
-        let v = Vector2D(x: 3, y: 4)
-        #expect(v.magnitude == 5)
-        #expect(Vector2D.zero.magnitude == 0)
+        let v = Vector3D(x: 1, y: 2, z: 2)  // magnitude = 3
+        #expect(abs(v.magnitude - 3.0) < 1e-10)
+        #expect(Vector3D.zero.magnitude == 0)
     }
 
     @Test func normalized() {
-        let v = Vector2D(x: 0, y: 5)
+        let v = Vector3D(x: 0, y: 0, z: 5)
         let n = v.normalized
         #expect(abs(n.x) < 1e-10)
-        #expect(abs(n.y - 1.0) < 1e-10)
+        #expect(abs(n.y) < 1e-10)
+        #expect(abs(n.z - 1.0) < 1e-10)
 
-        let zero = Vector2D.zero.normalized
-        #expect(zero == .zero)
+        #expect(Vector3D.zero.normalized == .zero)
     }
 }
 
 // MARK: - CoordinateTransformer Tests
 
 struct CoordinateTransformerTests {
+
+    /// Origin (0,0,0) must always map to the canvas center regardless of camera angles.
     @Test func originMapsToCenter() {
-        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 150)
+        let transformer = CoordinateTransformer(
+            canvasSize: CGSize(width: 400, height: 300),
+            simulationSeparation: 150,
+            azimuth: 0,
+            elevation: 0
+        )
         let result = transformer.simulationToCanvas(.zero)
         #expect(result.x == 200)
         #expect(result.y == 150)
     }
 
-    @Test func offsetMapsCorrectlyWithScale() {
-        // Canvas 400x300, separation 100 → scale = min(400,300)*0.7/100 = 2.1
-        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 100)
+    /// At azimuth=0, elevation=0, the projection is a flat top-down view:
+    /// canvasX = centerX + x*scale, canvasY = centerY + y*scale.
+    @Test func flatProjectionMapsCorrectly() {
+        let transformer = CoordinateTransformer(
+            canvasSize: CGSize(width: 400, height: 300),
+            simulationSeparation: 100,
+            azimuth: 0,
+            elevation: 0
+        )
         let scale = transformer.scale
-        let result = transformer.simulationToCanvas(Vector2D(x: 50, y: -30))
+        let result = transformer.simulationToCanvas(Vector3D(x: 50, y: -30, z: 0))
         #expect(abs(result.x - (200 + 50 * scale)) < 0.01)
         #expect(abs(result.y - (150 + (-30) * scale)) < 0.01)
     }
 
+    /// Larger separation must produce a smaller scale (zoom-out to fit).
     @Test func scaleAdjustsWithSeparation() {
-        let small = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 100)
-        let large = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), simulationSeparation: 300)
-        // Larger separation should produce a smaller scale
+        let small = CoordinateTransformer(
+            canvasSize: CGSize(width: 400, height: 300),
+            simulationSeparation: 100,
+            azimuth: 0,
+            elevation: 0
+        )
+        let large = CoordinateTransformer(
+            canvasSize: CGSize(width: 400, height: 300),
+            simulationSeparation: 300,
+            azimuth: 0,
+            elevation: 0
+        )
         #expect(large.scale < small.scale)
     }
 
+    /// At elevation=π/2 (edge-on), a point with z≠0 should affect screen-Y
+    /// while a point in the x-y plane (z=0) produces screenY=0.
+    @Test func elevationProjectsZAxis() {
+        let transformer = CoordinateTransformer(
+            canvasSize: CGSize(width: 400, height: 400),
+            simulationSeparation: 100,
+            azimuth: 0,
+            elevation: .pi / 2  // edge-on
+        )
+        let scale = transformer.scale
+        let center = CGPoint(x: 200, y: 200)
+
+        // Point on x-axis with z=0: at edge-on view screenY = cos(π/2)*y + sin(π/2)*z = 0
+        let onPlane = transformer.simulationToCanvas(Vector3D(x: 50, y: 0, z: 0))
+        #expect(abs(onPlane.y - center.y) < 0.01)
+
+        // Point with z=20: screenY = sin(π/2)*20 = 20 → canvasY = center + 20*scale
+        let offPlane = transformer.simulationToCanvas(Vector3D(x: 0, y: 0, z: 20))
+        #expect(abs(offPlane.y - (center.y + 20 * scale)) < 0.01)
+    }
+
+    /// Batch trail transformation should preserve count and match individual projections.
     @Test func trailTransformation() {
-        // Use separation = 140 so scale = min(200,200)*0.7/140 = 1.0
-        let transformer = CoordinateTransformer(canvasSize: CGSize(width: 200, height: 200), simulationSeparation: 140)
+        let transformer = CoordinateTransformer(
+            canvasSize: CGSize(width: 200, height: 200),
+            simulationSeparation: 100,
+            azimuth: 0,
+            elevation: 0
+        )
+        let scale = transformer.scale
         let trail = [
-            Vector2D(x: 0, y: 0),
-            Vector2D(x: 10, y: 10)
+            Vector3D(x: 0,  y: 0,  z: 0),
+            Vector3D(x: 10, y: 10, z: 0)
         ]
         let result = transformer.transformTrail(trail)
-        let scale = transformer.scale
         #expect(result.count == 2)
         #expect(result[0] == CGPoint(x: 100, y: 100))
         #expect(abs(result[1].x - (100 + 10 * scale)) < 0.01)
@@ -132,19 +235,19 @@ struct CoordinateTransformerTests {
 struct GravitySimulationEngineTests {
     @Test func accelerationDirectsTowardSource() {
         let body1 = CelestialBody(mass: 100, position: .zero, velocity: .zero)
-        let body2 = CelestialBody(mass: 1, position: Vector2D(x: 100, y: 0), velocity: .zero)
+        let body2 = CelestialBody(mass: 1, position: Vector3D(x: 100, y: 0, z: 0), velocity: .zero)
 
         let (a1, a2) = GravitySimulationEngine.computeAccelerations(body1: body1, body2: body2)
 
-        // body1 should accelerate toward body2 (positive x)
+        // body1 should accelerate toward body2 (positive x direction)
         #expect(a1.x > 0)
-        // body2 should accelerate toward body1 (negative x)
+        // body2 should accelerate toward body1 (negative x direction)
         #expect(a2.x < 0)
     }
 
     @Test func heavierBodyAcceleratesLess() {
         let body1 = CelestialBody(mass: 1000, position: .zero, velocity: .zero)
-        let body2 = CelestialBody(mass: 1, position: Vector2D(x: 100, y: 0), velocity: .zero)
+        let body2 = CelestialBody(mass: 1, position: Vector3D(x: 100, y: 0, z: 0), velocity: .zero)
 
         let (a1, a2) = GravitySimulationEngine.computeAccelerations(body1: body1, body2: body2)
 
@@ -156,8 +259,8 @@ struct GravitySimulationEngineTests {
         let body1 = CelestialBody(mass: 200, position: .zero, velocity: .zero)
         let body2 = CelestialBody(
             mass: 5,
-            position: Vector2D(x: 150, y: 0),
-            velocity: Vector2D(x: 0, y: 25)
+            position: Vector3D(x: 150, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: 25, z: 0)
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
@@ -165,16 +268,41 @@ struct GravitySimulationEngineTests {
 
         engine.step(dt: 0.02)
 
-        // Position should have changed
         #expect(engine.body2.position != initialPos)
+    }
+
+    /// A non-zero inclination should produce a non-zero z-velocity after a step,
+    /// confirming that the orbit actually leaves the x-y plane.
+    @Test func inclinedOrbitDevelopsZComponent() {
+        let mass: Double = 200
+        let r: Double = 150
+        let rs = 2.0 * GravitySimulationEngine.G * mass / GravitySimulationEngine.cSquared
+        let v = sqrt(GravitySimulationEngine.G * mass / max(r - 1.5 * rs, 0.1))
+        let inclination = Double.pi / 4  // 45°
+
+        let body1 = CelestialBody(mass: mass, position: .zero, velocity: .zero)
+        let body2 = CelestialBody(
+            mass: 5,
+            position: Vector3D(x: r, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: v * cos(inclination), z: v * sin(inclination))
+        )
+
+        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+
+        for _ in 0..<100 {
+            engine.step(dt: 0.02)
+        }
+
+        // After 100 steps, z-position should have diverged from zero (inclined orbit)
+        #expect(abs(engine.body2.position.z) > 0.01)
     }
 
     @Test func metricsAreComputed() {
         let body1 = CelestialBody(mass: 200, position: .zero, velocity: .zero)
         let body2 = CelestialBody(
             mass: 5,
-            position: Vector2D(x: 150, y: 0),
-            velocity: Vector2D(x: 0, y: 25)
+            position: Vector3D(x: 150, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: 25, z: 0)
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
@@ -187,43 +315,41 @@ struct GravitySimulationEngineTests {
     }
 
     @Test func blackHoleDetection() {
-        let orbiter = CelestialBody(mass: 1, position: Vector2D(x: 100, y: 0), velocity: .zero)
+        let orbiter = CelestialBody(mass: 1, position: Vector3D(x: 100, y: 0, z: 0), velocity: .zero)
 
-        // Small mass with black hole mode: not a black hole (r_s too small)
+        // Small mass with black hole mode: rₛ too small → not flagged
         let smallBody = CelestialBody(mass: 100, position: .zero, velocity: .zero)
         let smallEngine = GravitySimulationEngine(body1: smallBody, body2: orbiter)
         smallEngine.isBlackHoleMode = true
-        smallEngine.step(dt: 0) // trigger metrics update
+        smallEngine.step(dt: 0)
         #expect(!smallEngine.metrics.isBlackHole)
 
-        // Large mass without toggle: not flagged as black hole
+        // Large mass without toggle: not flagged
         let bigBody = CelestialBody(mass: 5000, position: .zero, velocity: .zero)
         let bigEngine = GravitySimulationEngine(body1: bigBody, body2: orbiter)
         #expect(!bigEngine.metrics.isBlackHole)
 
-        // Large mass with toggle: is a black hole
+        // Large mass with toggle: flagged as black hole
         bigEngine.isBlackHoleMode = true
         bigEngine.step(dt: 0)
         #expect(bigEngine.metrics.isBlackHole)
     }
 
     @Test func absorptionAtEventHorizon() {
-        // Place body2 just outside the event horizon of a massive body
         let body1 = CelestialBody(mass: 10000, position: .zero, velocity: .zero)
         let rs = 2.0 * GravitySimulationEngine.G * 10000.0 / GravitySimulationEngine.cSquared
 
-        // Start body2 just barely outside event horizon, falling inward
+        // Start body2 just outside the event horizon, falling inward
         let body2 = CelestialBody(
             mass: 1,
-            position: Vector2D(x: rs + 1, y: 0),
-            velocity: Vector2D(x: -50, y: 0)
+            position: Vector3D(x: rs + 1, y: 0, z: 0),
+            velocity: Vector3D(x: -50, y: 0, z: 0)
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
         engine.isBlackHoleMode = true
         #expect(!engine.metrics.isAbsorbed)
 
-        // Step until absorbed or max iterations
         for _ in 0..<1000 {
             engine.step(dt: 0.01)
             if engine.metrics.isAbsorbed { break }
@@ -236,8 +362,8 @@ struct GravitySimulationEngineTests {
         let body1 = CelestialBody(mass: 200, position: .zero, velocity: .zero)
         let body2 = CelestialBody(
             mass: 5,
-            position: Vector2D(x: 150, y: 0),
-            velocity: Vector2D(x: 0, y: 25)
+            position: Vector3D(x: 150, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: 25, z: 0)
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
@@ -253,30 +379,70 @@ struct GravitySimulationEngineTests {
         #expect(engine.metrics.properTime < coordinateTime)
     }
 
+    /// Verifies that the Velocity-Verlet integrator conserves total mechanical
+    /// energy over many steps.
+    ///
+    /// The Schwarzschild GR correction slightly modifies the effective potential,
+    /// but the symplectic nature of Velocity-Verlet means energy error should
+    /// remain bounded (oscillatory) rather than growing monotonically.
+    /// A 5% tolerance is used to account for the GR correction's energy shift
+    /// while still catching runaway drift from integrator bugs.
+    @Test func orbitalEnergyIsApproximatelyConserved() {
+        let mass1: Double = 200
+        let mass2: Double = 5
+        let r: Double = 150
+        let rs = 2.0 * GravitySimulationEngine.G * mass1 / GravitySimulationEngine.cSquared
+        let v = sqrt(GravitySimulationEngine.G * mass1 / max(r - 1.5 * rs, 0.1))
+
+        let body1 = CelestialBody(mass: mass1, position: .zero, velocity: .zero)
+        let body2 = CelestialBody(
+            mass: mass2,
+            position: Vector3D(x: r, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: v, z: 0)
+        )
+        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+
+        // Total mechanical energy: KE₁ + KE₂ − G·m₁·m₂/r
+        func totalEnergy() -> Double {
+            let ke1 = 0.5 * engine.body1.mass * engine.body1.velocity.magnitudeSquared
+            let ke2 = 0.5 * engine.body2.mass * engine.body2.velocity.magnitudeSquared
+            let sep = (engine.body2.position - engine.body1.position).magnitude
+            let pe = -GravitySimulationEngine.G * engine.body1.mass * engine.body2.mass / sep
+            return ke1 + ke2 + pe
+        }
+
+        let e0 = totalEnergy()
+
+        for _ in 0..<5000 {
+            engine.step(dt: 0.02)
+        }
+
+        let e1 = totalEnergy()
+        let relativeError = abs(e1 - e0) / abs(e0)
+        // Symplectic integrators bound energy error — drift must stay under 5%
+        #expect(relativeError < 0.05)
+    }
+
     @Test func grCorrectionCausesPrecession() {
-        // Set up a nearly circular orbit and run for many orbits
         let mass: Double = 500
         let r: Double = 80.0
         let rs = 2.0 * GravitySimulationEngine.G * mass / GravitySimulationEngine.cSquared
-
-        // Relativistic circular orbit speed
         let v = sqrt(GravitySimulationEngine.G * mass / max(r - 1.5 * rs, 0.1))
 
         let body1 = CelestialBody(mass: mass, position: .zero, velocity: .zero)
         let body2 = CelestialBody(
             mass: 1,
-            position: Vector2D(x: r, y: 0),
-            velocity: Vector2D(x: 0, y: v)
+            position: Vector3D(x: r, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: v, z: 0)
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
 
-        // Run for many steps to allow precession to accumulate
         for _ in 0..<10000 {
             engine.step(dt: 0.01)
         }
 
-        // Precession angle should be non-zero (GR effect)
+        // GR correction causes the perihelion to precess — angle must be non-zero
         #expect(abs(engine.metrics.precessionAngle) > 0.01)
     }
 
@@ -285,14 +451,13 @@ struct GravitySimulationEngineTests {
         let rs = 2.0 * GravitySimulationEngine.G * 10000.0 / GravitySimulationEngine.cSquared
         let body2 = CelestialBody(
             mass: 1,
-            position: Vector2D(x: rs + 1, y: 0),
-            velocity: Vector2D(x: -50, y: 0)
+            position: Vector3D(x: rs + 1, y: 0, z: 0),
+            velocity: Vector3D(x: -50, y: 0, z: 0)
         )
 
         let engine = GravitySimulationEngine(body1: body1, body2: body2)
         engine.isBlackHoleMode = true
 
-        // Force absorption
         for _ in 0..<1000 {
             engine.step(dt: 0.01)
             if engine.metrics.isAbsorbed { break }
@@ -300,7 +465,7 @@ struct GravitySimulationEngineTests {
 
         let posAfterAbsorption = engine.body2.position
 
-        // Further steps should not change position
+        // Further steps must not change position once absorbed
         engine.step(dt: 0.01)
         #expect(engine.body2.position == posAfterAbsorption)
     }
@@ -347,29 +512,45 @@ struct SimulationViewModelTests {
         #expect(!vm.isRunning)
     }
 
+    /// Body1 starts at the origin — must project to canvas center at any camera angle.
     @Test func body1PositionAtCanvasCenter() {
         let vm = SimulationViewModel { body1, body2 in
             MockSimulationEngine(body1: body1, body2: body2)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
-        // Body1 starts at origin (0,0), which maps to canvas center
         #expect(vm.body1Position.x == 200)
         #expect(vm.body1Position.y == 150)
     }
 
+    /// Body2 starts at (separation, 0, 0).  At azimuth=0 the x-axis maps directly to
+    /// screen-x, so body2Position.x = centerX + separation * scale regardless of elevation.
     @Test func body2PositionOffsetFromCenter() {
         let vm = SimulationViewModel { body1, body2 in
             MockSimulationEngine(body1: body1, body2: body2)
         }
-        // Set multipliers so simulationSeparation = 100 (baseAU=150, so 100/150 ≈ 0.667)
         vm.config.separationAU = 100.0 / CelestialConstants.baseAU
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
-        // Body2 starts at (separation, 0) from center, scaled by coordinateScale
+        // Body2 is on the x-axis (y=0, z=0). Azimuth rotation maps x→screenX unchanged.
+        // Elevation blend: screenY = cos(θ)*y' + sin(θ)*z = 0. So y stays at center.
         let expectedX = 200.0 + vm.config.simulationSeparation * vm.coordinateScale
         #expect(abs(vm.body2Position.x - expectedX) < 0.01)
         #expect(abs(vm.body2Position.y - 150) < 0.01)
+    }
+
+    /// Rotating the camera should not change body1's canvas position (it is at the origin).
+    @Test func rotateCameraPreservesOriginProjection() {
+        let vm = SimulationViewModel { body1, body2 in
+            MockSimulationEngine(body1: body1, body2: body2)
+        }
+        vm.setup(canvasSize: CGSize(width: 400, height: 300))
+
+        vm.rotateCamera(deltaAzimuth: 0.5, deltaElevation: 0.3)
+
+        // Origin always projects to canvas center
+        #expect(vm.body1Position.x == 200)
+        #expect(vm.body1Position.y == 150)
     }
 }
 

@@ -3,7 +3,17 @@
 //  CosmicPathSwift
 //
 //  Simulation controls: start/pause, reset, black hole mode toggle,
-//  and parameter sliders for mass and separation.
+//  and parameter sliders for mass, separation, and orbital inclination.
+//
+//  ## Inclination Slider
+//
+//  The inclination slider (0° – 90°) sets the tilt of the orbital plane
+//  relative to the default x-y plane. At 0° the orbit is flat (original 2D
+//  behaviour). At 90° the orbit is polar. Changes trigger `applyConfigChange`
+//  which restarts the simulation with the updated 3D initial conditions.
+//
+//  To appreciate an inclined orbit, drag the canvas to rotate the camera
+//  (horizontal drag = azimuth, vertical drag = elevation).
 //
 
 import SwiftUI
@@ -35,8 +45,8 @@ struct ControlPanelView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            // Play/Pause and Reset buttons
-            HStack(spacing: 20) {
+            // Play/Pause, Reset simulation, and Reset Camera buttons
+            HStack(spacing: 12) {
                 Button {
                     if viewModel.isRunning {
                         viewModel.pause()
@@ -48,7 +58,7 @@ struct ControlPanelView: View {
                         viewModel.isRunning ? "Pause" : "Start",
                         systemImage: viewModel.isRunning ? "pause.fill" : "play.fill"
                     )
-                    .frame(minWidth: 100)
+                    .frame(minWidth: 90)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(viewModel.isRunning ? .orange : .green)
@@ -60,6 +70,17 @@ struct ControlPanelView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
+
+                // Restores the camera to its default azimuth=0°, elevation=30° view.
+                // Useful after dragging the orbit to an awkward angle.
+                Button {
+                    viewModel.resetCamera()
+                } label: {
+                    Image(systemName: "video.badge.ellipsis")
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
+                .help("Reset Camera")
             }
 
             // Black hole mode toggle and sliders (portrait only)
@@ -86,10 +107,14 @@ struct ControlPanelView: View {
                         viewModel.config.mass1Multiplier = 1.0
                         viewModel.config.separationAU = 1.0
                     }
+                    // Always reset inclination when switching mode so the user
+                    // starts from a flat orbit and can appreciate BH effects before
+                    // adding 3D complexity.
+                    viewModel.config.inclinationDeg = 0.0
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
 
-                // Parameter sliders (logarithmic scale, default 1.0 centered)
+                // Parameter sliders (mass/distance use log scale; inclination uses linear)
                 VStack(spacing: 8) {
                     logSlider(
                         label: viewModel.config.isBlackHoleMode ? "BH Mass" : "Star Mass",
@@ -112,6 +137,22 @@ struct ControlPanelView: View {
                         color: .white,
                         displayText: viewModel.config.separationLabel
                     )
+
+                    // Inclination: linear 0°–90° slider.
+                    // Tilts the orbital plane out of the x-y plane. Drag the
+                    // canvas to rotate the camera and see the 3D structure.
+                    HStack {
+                        Text("Inclination")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 90, alignment: .leading)
+                        Slider(value: $viewModel.config.inclinationDeg, in: 0...90)
+                            .tint(.purple)
+                        Text(viewModel.config.inclinationLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 70, alignment: .trailing)
+                    }
                 }
                 .disabled(viewModel.isRunning)
                 .opacity(viewModel.isRunning ? 0.5 : 1.0)
@@ -122,6 +163,9 @@ struct ControlPanelView: View {
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
                 .onChange(of: viewModel.config.separationAU) { _, _ in
+                    viewModel.applyConfigChange(canvasSize: canvasSize)
+                }
+                .onChange(of: viewModel.config.inclinationDeg) { _, _ in
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
 
