@@ -9,9 +9,19 @@
 
 import SwiftUI
 
+/// Self-contained SwiftUI Canvas that renders the app icon artwork.
+///
+/// The icon depicts the simulation's key visual elements: a radial-gradient star,
+/// a cyan planet with a fading orbital trail, and a background warped spacetime grid.
+/// All dimensions are proportional to `size`, so the icon scales cleanly from
+/// small thumbnails to large previews.
+///
+/// This view is used only for icon design/export and is not part of the runtime UI.
 struct AppIconView: View {
+    /// The width and height of the square icon canvas.
     let size: CGFloat
 
+    /// Star position, offset slightly left and up from center for visual balance.
     private var center: CGPoint {
         CGPoint(x: size * 0.42, y: size * 0.48)
     }
@@ -118,6 +128,8 @@ struct AppIconView: View {
 
     // MARK: - Spacetime Grid
 
+    /// Draws the background spacetime grid with gravitational warping toward the star.
+    /// Uses the same warp-toward-center technique as `SimulationCanvasView`.
     private func drawSpacetimeGrid(context: GraphicsContext, size: CGFloat) {
         let gridSpacing = size / 10
         let warpStrength: CGFloat = size * 0.08
@@ -164,6 +176,7 @@ struct AppIconView: View {
         }
     }
 
+    /// Displaces a point toward the star center with inverse-distance falloff.
     private func warpGridPoint(_ point: CGPoint, strength: CGFloat) -> CGPoint {
         let dx = center.x - point.x
         let dy = center.y - point.y
@@ -177,6 +190,10 @@ struct AppIconView: View {
 
     // MARK: - Orbital Trail
 
+    /// Draws a fading elliptical arc representing the planet's orbital trail.
+    /// The trail starts bright near the planet and fades to transparent at the tail,
+    /// spanning ~300° of the ellipse. The 0.85 vertical multiplier on the y-coordinate
+    /// gives the orbit a slight tilt for a 3D perspective effect.
     private func drawOrbitalTrail(context: GraphicsContext, size: CGFloat) {
         let segments = 80
         let startAngle: Double = -0.6

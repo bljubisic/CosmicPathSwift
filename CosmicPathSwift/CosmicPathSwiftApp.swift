@@ -7,6 +7,8 @@
 
 import SwiftUI
 
+/// App entry point. Launches a single window containing the `ContentView`,
+/// which manages the full simulation UI (canvas, metrics, and controls).
 @main
 struct CosmicPathSwiftApp: App {
     var body: some Scene {

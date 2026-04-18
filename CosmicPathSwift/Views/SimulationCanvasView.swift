@@ -8,6 +8,24 @@
 
 import SwiftUI
 
+/// Main rendering surface for the gravitational simulation.
+///
+/// Composes multiple visual layers in a ZStack (back to front):
+/// 1. Dark background
+/// 2. Warped spacetime grid (purely visual — does not affect physics)
+/// 3. Black hole effects (lensing glow, accretion disk, ISCO/photon rings)
+/// 4. Schwarzschild radius ring (dashed in normal mode, solid in BH mode)
+/// 5. Orbital trails (fade-in from old to new positions)
+/// 6. Gravitational force line connecting the two bodies
+/// 7. Body 1 (star or black hole) and Body 2 (planet)
+/// 8. Formula overlay (Einstein field equation / acceleration formula)
+/// 9. Absorption overlay (shown when body2 crosses the event horizon)
+///
+/// ## Canvas Sizing
+///
+/// Uses `GeometryReader` to report its size to the parent via `canvasSize` binding.
+/// On appear, calls `viewModel.setup(canvasSize:)` to initialize the simulation.
+/// On resize, calls `viewModel.resizeCanvas(_:)` to update the coordinate transformer.
 struct SimulationCanvasView: View {
     let viewModel: SimulationViewModel
     @Binding var canvasSize: CGSize
@@ -67,6 +85,9 @@ struct SimulationCanvasView: View {
 
     // MARK: - Body 1 (Star or Black Hole)
 
+    /// Renders body1 as either a black hole (solid black disc with gradient edge) or
+    /// a radial-gradient star. In black hole mode, the disc diameter equals 2×rₛ
+    /// scaled to canvas coordinates.
     @ViewBuilder
     private var body1View: some View {
         if viewModel.metrics.isBlackHole {
@@ -111,6 +132,9 @@ struct SimulationCanvasView: View {
 
     // MARK: - Body 2
 
+    /// Renders the orbiting body (planet) as a radial-gradient circle.
+    /// The gradient color reflects the current gravitational time dilation severity
+    /// (cyan → blue → purple → red as dilation increases).
     private var body2View: some View {
         let color = viewModel.metrics.timeDilationColor
         return Circle()
@@ -132,6 +156,9 @@ struct SimulationCanvasView: View {
 
     // MARK: - Schwarzschild Ring
 
+    /// Draws the event horizon boundary circle around body1.
+    /// In normal mode: dashed, semi-transparent red ring (rₛ is small, decorative).
+    /// In black hole mode: solid red ring matching the visible black disc edge.
     private var schwarzschildRing: some View {
         let isBlackHole = viewModel.metrics.isBlackHole
         let rs = CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
@@ -173,6 +200,14 @@ struct SimulationCanvasView: View {
 
     // MARK: - Spacetime Grid
 
+    /// Draws a grid of vertical and horizontal lines warped toward body1's position
+    /// to visualize spacetime curvature. This is a purely cosmetic effect — the actual
+    /// physics uses the Schwarzschild metric equations, not grid deformation.
+    ///
+    /// Lines are drawn at 50pt intervals and subdivided into 5pt segments. Each segment
+    /// vertex is displaced toward body1 by `warpPoint`, creating the visual impression
+    /// of a gravitational well. The warp strength scales with body1's mass and the
+    /// current coordinate zoom factor.
     private func spacetimeGrid(size: CGSize) -> some View {
         Canvas { context, canvasSize in
             let step: CGFloat = 50
@@ -230,6 +265,9 @@ struct SimulationCanvasView: View {
 
     // MARK: - Trail Path
 
+    /// Renders an orbital trail as a series of line segments with progressive opacity.
+    /// Older trail points are more transparent, newer points are more opaque, creating
+    /// a fade-in effect that shows the direction of motion.
     private func trailPath(points: [CGPoint], color: Color) -> some View {
         Canvas { context, _ in
             guard points.count > 1 else { return }
@@ -250,6 +288,10 @@ struct SimulationCanvasView: View {
 
     // MARK: - Formula Overlay
 
+    /// Displays the governing equations in the top-left corner as a subtle watermark.
+    /// Shows the Einstein field equation (Gμν + Λgμν = 8πG/c⁴ Tμν) and either:
+    /// - Normal mode: the Schwarzschild geodesic acceleration formula
+    /// - Black hole mode: the Schwarzschild radius and photon sphere formulas
     private var formulaOverlay: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
@@ -276,12 +318,27 @@ struct SimulationCanvasView: View {
 
     // MARK: - Helpers
 
-    /// Star radius: grows slightly with mass multiplier.
-    /// Minimum 8pt so it's always clearly visible.
+    /// Zoom-based size multiplier for celestial bodies.
+    /// At the default separation (1 AU), this is 1.0. As the distance increases
+    /// and the view zooms out, bodies shrink proportionally (clamped to 40%-100%)
+    /// so they don't dominate the canvas at high zoom-out levels.
+    private var zoomSizeScale: CGFloat {
+        // coordinateScale is inversely proportional to the viewed extent.
+        // Compute the reference scale at default 1 AU separation.
+        let referenceExtent = CelestialConstants.baseAU * CelestialConstants.orbitMarginFactor
+        let minDim = max(min(canvasSize.width, canvasSize.height), 1) // guard against zero
+        let halfCanvas = minDim * 0.40
+        let referenceScale = halfCanvas / referenceExtent
+        let ratio = CGFloat(viewModel.coordinateScale) / referenceScale
+        return max(0.4, min(1.0, ratio))
+    }
+
+    /// Star radius: grows slightly with mass multiplier and shrinks with zoom.
+    /// Minimum 6pt so it's always clearly visible.
     private var starRadius: CGFloat {
         let baseRadius: CGFloat = 14
         let massScale = CGFloat(log(viewModel.config.mass1Multiplier + 1)) * 0.5 + 1
-        return max(8, baseRadius * massScale)
+        return max(6, baseRadius * massScale * zoomSizeScale)
     }
 
     /// Planet radius: proportionally smaller than the star.
@@ -294,6 +351,9 @@ struct SimulationCanvasView: View {
         return max(3, baseRadius * massScale)
     }
 
+    /// Displaces a grid point toward a center point (body1) to simulate gravitational
+    /// curvature. The displacement is inversely proportional to distance: points near
+    /// the center are pulled more, creating a funnel-like distortion.
     private func warpPoint(_ point: CGPoint, toward center: CGPoint, strength: CGFloat) -> CGPoint {
         let dx = center.x - point.x
         let dy = center.y - point.y

@@ -8,8 +8,22 @@
 
 import SwiftUI
 
+/// Root view that composes the simulation canvas, metrics panel, and control panel.
+///
+/// Uses `GeometryReader` to detect orientation and switch between portrait and
+/// landscape layouts. In portrait, the full control panel (sliders + toggles) is
+/// shown below the canvas when paused. In landscape, parameter sliders are hidden
+/// to maximize canvas area — only play/pause/reset buttons are shown.
+///
+/// ## Layout States
+///
+/// - **Portrait, paused**: Title bar + canvas + metrics + full controls (sliders visible)
+/// - **Portrait, running**: Full-screen canvas + floating mass legend, metrics, and pause button
+/// - **Landscape, paused**: Full-screen canvas + bottom overlay with metrics + minimal controls
+/// - **Landscape, running**: Full-screen canvas + floating mass legend, metrics, and pause button
 struct ContentView: View {
     @State private var viewModel = SimulationViewModel()
+    /// Tracks the current canvas size for passing to the ViewModel on setup/reset.
     @State private var canvasSize: CGSize = .zero
 
     var body: some View {
@@ -27,6 +41,10 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
     }
 
+    // MARK: - Portrait Layout
+
+    /// Portrait layout switches between a full-control editing state (paused) and
+    /// a full-screen immersive view (running) with floating overlays.
     private var portraitLayout: some View {
         ZStack {
             if viewModel.isRunning {
@@ -73,6 +91,11 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Landscape Layout
+
+    /// Landscape layout always shows full-screen canvas. Parameter sliders are hidden
+    /// (`showParameterControls: false`) to maximize visual space. Only play/pause/reset
+    /// buttons appear in the bottom overlay when paused.
     private var landscapeLayout: some View {
         ZStack(alignment: .bottom) {
             SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
@@ -150,6 +173,8 @@ struct ContentView: View {
 
     // MARK: - Mass Legend
 
+    /// Color-coded legend showing the current mass label for each celestial body.
+    /// Star/BH is orange/red, planet is cyan — matching the rendered body colors.
     private var massLegend: some View {
         HStack(spacing: 16) {
             HStack(spacing: 4) {

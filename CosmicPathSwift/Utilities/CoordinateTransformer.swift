@@ -34,6 +34,9 @@ struct CoordinateTransformer {
         }
     }
 
+    /// Converts a simulation-space position (origin at center) to a canvas-space point
+    /// (origin at top-left). The simulation origin maps to the canvas center, and
+    /// positions are scaled by the auto-zoom factor.
     func simulationToCanvas(_ v: Vector2D) -> CGPoint {
         CGPoint(
             x: canvasCenter.x + v.x * scale,
@@ -41,6 +44,7 @@ struct CoordinateTransformer {
         )
     }
 
+    /// Batch-converts an array of simulation-space trail positions to canvas-space points.
     func transformTrail(_ trail: [Vector2D]) -> [CGPoint] {
         trail.map { simulationToCanvas($0) }
     }
