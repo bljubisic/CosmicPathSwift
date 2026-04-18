@@ -379,6 +379,50 @@ struct GravitySimulationEngineTests {
         #expect(engine.metrics.properTime < coordinateTime)
     }
 
+    /// Verifies that the Velocity-Verlet integrator conserves total mechanical
+    /// energy over many steps.
+    ///
+    /// The Schwarzschild GR correction slightly modifies the effective potential,
+    /// but the symplectic nature of Velocity-Verlet means energy error should
+    /// remain bounded (oscillatory) rather than growing monotonically.
+    /// A 5% tolerance is used to account for the GR correction's energy shift
+    /// while still catching runaway drift from integrator bugs.
+    @Test func orbitalEnergyIsApproximatelyConserved() {
+        let mass1: Double = 200
+        let mass2: Double = 5
+        let r: Double = 150
+        let rs = 2.0 * GravitySimulationEngine.G * mass1 / GravitySimulationEngine.cSquared
+        let v = sqrt(GravitySimulationEngine.G * mass1 / max(r - 1.5 * rs, 0.1))
+
+        let body1 = CelestialBody(mass: mass1, position: .zero, velocity: .zero)
+        let body2 = CelestialBody(
+            mass: mass2,
+            position: Vector3D(x: r, y: 0, z: 0),
+            velocity: Vector3D(x: 0, y: v, z: 0)
+        )
+        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+
+        // Total mechanical energy: KE₁ + KE₂ − G·m₁·m₂/r
+        func totalEnergy() -> Double {
+            let ke1 = 0.5 * engine.body1.mass * engine.body1.velocity.magnitudeSquared
+            let ke2 = 0.5 * engine.body2.mass * engine.body2.velocity.magnitudeSquared
+            let sep = (engine.body2.position - engine.body1.position).magnitude
+            let pe = -GravitySimulationEngine.G * engine.body1.mass * engine.body2.mass / sep
+            return ke1 + ke2 + pe
+        }
+
+        let e0 = totalEnergy()
+
+        for _ in 0..<5000 {
+            engine.step(dt: 0.02)
+        }
+
+        let e1 = totalEnergy()
+        let relativeError = abs(e1 - e0) / abs(e0)
+        // Symplectic integrators bound energy error — drift must stay under 5%
+        #expect(relativeError < 0.05)
+    }
+
     @Test func grCorrectionCausesPrecession() {
         let mass: Double = 500
         let r: Double = 80.0

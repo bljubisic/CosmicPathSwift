@@ -158,6 +158,12 @@ struct RelativisticMetrics {
 
     // MARK: - Orbital Dynamics
 
+    /// Number of complete orbits body2 has completed, incremented each time
+    /// the engine detects a perihelion passage (local minimum in separation).
+    /// A Newtonian orbit increments this once per revolution; GR precession
+    /// shifts the perihelion each orbit, but the count is still exact.
+    var orbitsCompleted: Int = 0
+
     /// Accumulated perihelion precession angle in degrees.
     /// In GR, orbits do not close — the perihelion advances by a small angle
     /// each orbit due to the -3GML²/(c²r⁴) curvature term. For Mercury, this
@@ -215,11 +221,6 @@ struct RelativisticMetrics {
             return .red
         }
     }
-    /// Number of complete orbits body2 has completed, incremented each time
-    /// the engine detects a perihelion passage (local minimum in separation).
-    /// A Newtonian orbit increments this once per revolution; GR precession
-    /// shifts the perihelion each orbit, but the count is still exact.
-    var orbitsCompleted: Int = 0
 }
 
 // MARK: - Celestial Constants

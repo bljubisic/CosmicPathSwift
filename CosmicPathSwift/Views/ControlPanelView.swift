@@ -45,8 +45,8 @@ struct ControlPanelView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            // Play/Pause and Reset buttons
-            HStack(spacing: 20) {
+            // Play/Pause, Reset simulation, and Reset Camera buttons
+            HStack(spacing: 12) {
                 Button {
                     if viewModel.isRunning {
                         viewModel.pause()
@@ -58,7 +58,7 @@ struct ControlPanelView: View {
                         viewModel.isRunning ? "Pause" : "Start",
                         systemImage: viewModel.isRunning ? "pause.fill" : "play.fill"
                     )
-                    .frame(minWidth: 100)
+                    .frame(minWidth: 90)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(viewModel.isRunning ? .orange : .green)
@@ -70,6 +70,17 @@ struct ControlPanelView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
+
+                // Restores the camera to its default azimuth=0°, elevation=30° view.
+                // Useful after dragging the orbit to an awkward angle.
+                Button {
+                    viewModel.resetCamera()
+                } label: {
+                    Image(systemName: "video.badge.ellipsis")
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
+                .help("Reset Camera")
             }
 
             // Black hole mode toggle and sliders (portrait only)
@@ -96,6 +107,10 @@ struct ControlPanelView: View {
                         viewModel.config.mass1Multiplier = 1.0
                         viewModel.config.separationAU = 1.0
                     }
+                    // Always reset inclination when switching mode so the user
+                    // starts from a flat orbit and can appreciate BH effects before
+                    // adding 3D complexity.
+                    viewModel.config.inclinationDeg = 0.0
                     viewModel.applyConfigChange(canvasSize: canvasSize)
                 }
 

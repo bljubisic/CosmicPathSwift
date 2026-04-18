@@ -143,6 +143,11 @@ class SimulationViewModel {
         // Reserve extra room beyond the initial separation so the full orbit
         // (which may be eccentric) fits on screen without waiting for dynamic zoom.
         maxExtent = config.simulationSeparation * CelestialConstants.orbitMarginFactor
+
+        // Note: the default camera elevation (π/6 = 30°) compresses the orbit
+        // vertically by cos(30°) ≈ 0.87, making a perfectly circular orbit
+        // appear as a slight ellipse. This is intentional — it gives a natural
+        // 3D perspective. Drag the canvas or tap Reset Camera to change the view.
         transformer = CoordinateTransformer(
             canvasSize: canvasSize,
             simulationSeparation: maxExtent,
@@ -243,6 +248,22 @@ class SimulationViewModel {
     }
 
     // MARK: - Camera Control
+
+    /// Resets the camera to its default orientation (azimuth = 0, elevation = 30°).
+    ///
+    /// Called when the user taps "Reset Camera". Restores the view angle that
+    /// gives a natural 3D perspective on a flat orbit without losing any simulation state.
+    func resetCamera() {
+        cameraAzimuth = 0.0
+        cameraElevation = .pi / 6
+        transformer = CoordinateTransformer(
+            canvasSize: currentCanvasSize,
+            simulationSeparation: maxExtent,
+            azimuth: cameraAzimuth,
+            elevation: cameraElevation
+        )
+        syncState()
+    }
 
     /// Rotates the camera by incremental delta angles and re-projects all visible state.
     ///

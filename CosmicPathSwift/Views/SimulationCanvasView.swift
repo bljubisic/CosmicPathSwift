@@ -41,10 +41,11 @@ struct SimulationCanvasView: View {
     let viewModel: SimulationViewModel
     @Binding var canvasSize: CGSize
 
-    /// Tracks the cumulative drag translation from the previous drag event so
-    /// we can compute per-event deltas and forward them to `rotateCamera`.
-    /// Reset to `.zero` when the gesture ends.
-    @State private var previousDragTranslation: CGSize = .zero
+    /// Tracks the cumulative drag translation of the current gesture so we can
+    /// compute per-event deltas. `@GestureState` automatically resets to `.zero`
+    /// when the gesture ends **or is cancelled** (e.g. when the user taps Reset
+    /// while dragging), preventing a stale offset from corrupting the next drag.
+    @GestureState private var previousDragTranslation: CGSize = .zero
 
     /// Radians of camera rotation per screen point of drag distance.
     /// 0.005 gives one full 360° turn in ~1257 points of horizontal drag.
@@ -108,19 +109,21 @@ struct SimulationCanvasView: View {
             }
             // Camera rotation gesture: drag horizontally to change azimuth,
             // vertically to change elevation. Elevation is clamped in rotateCamera().
+            //
+            // `.updating` keeps @GestureState in sync so it auto-resets to .zero
+            // on gesture end or cancellation (e.g. mid-drag Reset tap).
             .gesture(
                 DragGesture(minimumDistance: 2)
+                    .updating($previousDragTranslation) { value, state, _ in
+                        state = value.translation
+                    }
                     .onChanged { value in
                         let deltaX = Double(value.translation.width  - previousDragTranslation.width)
                         let deltaY = Double(value.translation.height - previousDragTranslation.height)
-                        previousDragTranslation = value.translation
                         viewModel.rotateCamera(
                             deltaAzimuth:   deltaX * cameraDragSensitivity,
                             deltaElevation: deltaY * cameraDragSensitivity
                         )
-                    }
-                    .onEnded { _ in
-                        previousDragTranslation = .zero
                     }
             )
         }
