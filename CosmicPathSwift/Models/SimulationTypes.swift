@@ -216,6 +216,11 @@ enum CelestialConstants {
     /// measurable but not extreme relativistic effects.
     static let baseAU: Double = 150.0
 
+    /// Extra margin factor applied to the initial orbital separation when setting
+    /// up the coordinate transformer. Ensures the full orbit (which may be eccentric)
+    /// fits on screen without waiting for dynamic zoom to kick in.
+    static let orbitMarginFactor: Double = 1.3
+
     /// Black hole mode base mass.
     /// With G=500, c²=40000: rₛ = 2×500×5000/40000 = 125 pixels,
     /// well above the visual threshold of 8 pixels. This makes the

@@ -97,9 +97,9 @@ class SimulationViewModel {
     /// mass stationary and prevents the system from drifting across the screen.
     func setup(canvasSize: CGSize) {
         currentCanvasSize = canvasSize
-        // Reserve 30% extra room beyond the initial separation so the full orbit
+        // Reserve extra room beyond the initial separation so the full orbit
         // (which can be eccentric) fits on screen without waiting for dynamic zoom.
-        maxExtent = config.simulationSeparation * 1.3
+        maxExtent = config.simulationSeparation * CelestialConstants.orbitMarginFactor
         transformer = CoordinateTransformer(canvasSize: canvasSize, simulationSeparation: maxExtent)
 
         let mass1 = config.simulationMass1
@@ -196,18 +196,28 @@ class SimulationViewModel {
         guard let engine else { return }
 
         // Track the farthest any body reaches from center.
-        // If it exceeds the current extent, rebuild the transformer to zoom out.
+        // Zoom out instantly if a body exceeds the current extent; zoom back in
+        // gradually via exponential decay so the view recovers after brief excursions.
         let extent1 = engine.body1.position.magnitude
         let extent2 = engine.body2.position.magnitude
         let currentMax = max(extent1, extent2)
 
-        if currentMax > maxExtent {
-            maxExtent = currentMax
-            transformer = CoordinateTransformer(
-                canvasSize: currentCanvasSize,
-                simulationSeparation: maxExtent
-            )
+        let minExtent = config.simulationSeparation * CelestialConstants.orbitMarginFactor
+        let targetExtent = max(currentMax * 1.1, minExtent)
+
+        if targetExtent > maxExtent {
+            // Zoom out immediately to keep bodies on screen
+            maxExtent = targetExtent
+        } else {
+            // Slowly decay toward the target so zoom recovers over ~3 seconds at 60fps
+            let decayRate = 0.995
+            maxExtent = max(targetExtent, maxExtent * decayRate)
         }
+
+        transformer = CoordinateTransformer(
+            canvasSize: currentCanvasSize,
+            simulationSeparation: maxExtent
+        )
 
         body1Position = transformer.simulationToCanvas(engine.body1.position)
         body2Position = transformer.simulationToCanvas(engine.body2.position)

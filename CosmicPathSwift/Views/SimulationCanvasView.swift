@@ -325,8 +325,9 @@ struct SimulationCanvasView: View {
     private var zoomSizeScale: CGFloat {
         // coordinateScale is inversely proportional to the viewed extent.
         // Compute the reference scale at default 1 AU separation.
-        let referenceExtent = CelestialConstants.baseAU * 1.3  // matches maxExtent padding in setup()
-        let halfCanvas = min(canvasSize.width, canvasSize.height) * 0.40
+        let referenceExtent = CelestialConstants.baseAU * CelestialConstants.orbitMarginFactor
+        let minDim = max(min(canvasSize.width, canvasSize.height), 1) // guard against zero
+        let halfCanvas = minDim * 0.40
         let referenceScale = halfCanvas / referenceExtent
         let ratio = CGFloat(viewModel.coordinateScale) / referenceScale
         return max(0.4, min(1.0, ratio))
