@@ -14,7 +14,8 @@
 //  On each drag change the view computes the translation delta relative to
 //  the previous event and forwards it to `viewModel.rotateCamera(_:_:)`,
 //  which rebuilds the `CoordinateTransformer` and re-projects all positions.
-//  The `previousDragTranslation` state is reset to `.zero` on gesture end.
+//  `previousDragTranslation` (@State) stores the last event's translation so
+//  each `.onChanged` can compute a delta; it is reset to `.zero` in `.onEnded`.
 //
 
 import SwiftUI
@@ -41,11 +42,15 @@ struct SimulationCanvasView: View {
     let viewModel: SimulationViewModel
     @Binding var canvasSize: CGSize
 
-    /// Tracks the cumulative drag translation of the current gesture so we can
-    /// compute per-event deltas. `@GestureState` automatically resets to `.zero`
-    /// when the gesture ends **or is cancelled** (e.g. when the user taps Reset
-    /// while dragging), preventing a stale offset from corrupting the next drag.
-    @GestureState private var previousDragTranslation: CGSize = .zero
+    /// Tracks the cumulative drag translation from the previous gesture event so
+    /// we can compute per-event deltas. Reset to `.zero` in `.onEnded` so each
+    /// new drag starts from a clean baseline.
+    ///
+    /// Note: `@GestureState` + `.updating` cannot be used here because both
+    /// callbacks fire in the same event cycle — `.updating` writes the current
+    /// translation to backing store before `.onChanged` reads it, making the
+    /// computed delta always zero and producing no camera movement.
+    @State private var previousDragTranslation: CGSize = .zero
 
     /// Radians of camera rotation per screen point of drag distance.
     /// 0.005 gives one full 360° turn in ~1257 points of horizontal drag.
@@ -101,7 +106,17 @@ struct SimulationCanvasView: View {
             }
             .onAppear {
                 canvasSize = geometry.size
-                viewModel.setup(canvasSize: geometry.size)
+                // Only create a new engine on the very first appearance.
+                // In portrait mode, SwiftUI creates separate SimulationCanvasView
+                // instances for the running and paused branches, so .onAppear fires
+                // again when the user pauses. Calling setup() there would reset the
+                // simulation unexpectedly — resizeCanvas() is sufficient to adapt
+                // the existing engine to the new canvas dimensions.
+                if viewModel.isSetup {
+                    viewModel.resizeCanvas(geometry.size)
+                } else {
+                    viewModel.setup(canvasSize: geometry.size)
+                }
             }
             .onChange(of: geometry.size) { _, newSize in
                 canvasSize = newSize
@@ -110,20 +125,21 @@ struct SimulationCanvasView: View {
             // Camera rotation gesture: drag horizontally to change azimuth,
             // vertically to change elevation. Elevation is clamped in rotateCamera().
             //
-            // `.updating` keeps @GestureState in sync so it auto-resets to .zero
-            // on gesture end or cancellation (e.g. mid-drag Reset tap).
+            // The delta is computed relative to the previous event's translation
+            // so small incremental drags produce smooth, proportional rotation.
             .gesture(
                 DragGesture(minimumDistance: 2)
-                    .updating($previousDragTranslation) { value, state, _ in
-                        state = value.translation
-                    }
                     .onChanged { value in
                         let deltaX = Double(value.translation.width  - previousDragTranslation.width)
                         let deltaY = Double(value.translation.height - previousDragTranslation.height)
+                        previousDragTranslation = value.translation
                         viewModel.rotateCamera(
                             deltaAzimuth:   deltaX * cameraDragSensitivity,
                             deltaElevation: deltaY * cameraDragSensitivity
                         )
+                    }
+                    .onEnded { _ in
+                        previousDragTranslation = .zero
                     }
             )
         }
