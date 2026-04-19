@@ -83,6 +83,11 @@ class SimulationViewModel {
 
     // MARK: - Dependencies
 
+    /// True once `setup()` has been called at least once. Used by the canvas view
+    /// to distinguish first appearance (needs full init) from re-appearance after
+    /// a portrait layout switch (only needs a canvas resize, not engine recreation).
+    var isSetup: Bool { engine != nil }
+
     private let engineFactory: @Sendable (CelestialBody, CelestialBody) -> SimulationEngineProtocol
     private var engine: SimulationEngineProtocol?
     private var simulationTask: Task<Void, Never>?
@@ -227,6 +232,13 @@ class SimulationViewModel {
 
     func reset(canvasSize: CGSize) {
         pause()
+        // Restore all user-adjustable parameters to their defaults so the
+        // simulation starts fresh regardless of what the sliders were set to.
+        config = SimulationConfig()
+        // Reset camera to the default 30° elevation view so the orbit is
+        // always recognisable after reset.
+        cameraAzimuth = 0.0
+        cameraElevation = .pi / 6
         setup(canvasSize: canvasSize)
     }
 

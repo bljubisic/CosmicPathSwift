@@ -154,7 +154,7 @@ struct ContentView: View {
     private var titleBar: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Cosmic Path")
+                Text("Simple Orbit Simulator")
                     .font(.title2.bold())
                 Text(viewModel.metrics.isBlackHole ? "Black Hole" : "General Relativity")
                     .font(.caption)
