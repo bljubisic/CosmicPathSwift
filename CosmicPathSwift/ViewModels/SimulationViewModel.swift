@@ -30,6 +30,7 @@
 //
 
 import Foundation
+import ReplayKit
 import SwiftUI
 
 @Observable
@@ -51,6 +52,14 @@ class SimulationViewModel {
     var isRunning: Bool = false
     var metrics = RelativisticMetrics()
     var config = SimulationConfig()
+
+    /// True while a ReplayKit screen recording is in progress.
+    var isRecording: Bool = false
+
+    /// Set to `true` by `stopRecording()` once the recorded video file is ready.
+    /// Observed by `ContentView`, which calls `consumePendingRecording()` to retrieve
+    /// the URL and present a share/save sheet, then resets this flag.
+    var hasPendingRecording: Bool = false
 
     /// Current coordinate scale factor (simulation units → canvas pixels).
     /// Used by the view to scale body radii proportionally with zoom.
@@ -87,6 +96,11 @@ class SimulationViewModel {
     /// to distinguish first appearance (needs full init) from re-appearance after
     /// a portrait layout switch (only needs a canvas resize, not engine recreation).
     var isSetup: Bool { engine != nil }
+
+    /// File URL of the recorded video produced by `stopRecording()`.
+    /// Consumed by `ContentView` via `consumePendingRecording()` for the share/save sheet.
+    /// The caller is responsible for deleting this file after use.
+    private var pendingRecordingURL: URL?
 
     private let engineFactory: @Sendable (CelestialBody, CelestialBody) -> SimulationEngineProtocol
     private var engine: SimulationEngineProtocol?
@@ -231,6 +245,18 @@ class SimulationViewModel {
     }
 
     func reset(canvasSize: CGSize) {
+        // Silently discard any in-progress recording rather than surfacing
+        // a save/share sheet mid-reset, which would be jarring for the user.
+        if isRecording {
+            RPScreenRecorder.shared().stopRecording { _, _ in }
+            isRecording = false
+        }
+        // Clean up any unconsumed temp file from a previous recording.
+        if let url = pendingRecordingURL {
+            try? FileManager.default.removeItem(at: url)
+            pendingRecordingURL = nil
+            hasPendingRecording = false
+        }
         pause()
         // Restore all user-adjustable parameters to their defaults so the
         // simulation starts fresh regardless of what the sliders were set to.
@@ -300,6 +326,61 @@ class SimulationViewModel {
             elevation: cameraElevation
         )
         syncState()
+    }
+
+    // MARK: - Screen Recording
+
+    /// Starts a ReplayKit screen recording of the simulation.
+    ///
+    /// Has no effect if the device does not support recording (`isAvailable`),
+    /// or if a recording is already in progress. `isRecording` is set to `true`
+    /// only after ReplayKit confirms the recording has started successfully.
+    func startRecording() {
+        let recorder = RPScreenRecorder.shared()
+        guard recorder.isAvailable, !isRecording else { return }
+        recorder.startRecording { error in
+            Task { @MainActor [weak self] in
+                if error == nil {
+                    self?.isRecording = true
+                }
+            }
+        }
+    }
+
+    /// Stops the current screen recording and writes the clip to a temporary `.mp4` file.
+    ///
+    /// On success, sets `hasPendingRecording = true`. The caller observes this flag
+    /// and calls `consumePendingRecording()` to retrieve the URL for the share/save sheet.
+    /// The caller is responsible for deleting the temp file after use.
+    /// Has no effect if no recording is in progress.
+    func stopRecording() {
+        guard isRecording else { return }
+        // Write the clip to a uniquely-named temp file so concurrent calls
+        // don't collide, and so it persists until the share sheet is dismissed.
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("orbit_\(Int(Date().timeIntervalSince1970))")
+            .appendingPathExtension("mp4")
+        RPScreenRecorder.shared().stopRecording(withOutput: tempURL) { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.isRecording = false
+                if error == nil {
+                    self?.pendingRecordingURL = tempURL
+                    self?.hasPendingRecording = true
+                }
+            }
+        }
+    }
+
+    /// Returns the pending recording URL and clears the pending state.
+    ///
+    /// Call this immediately after observing `hasPendingRecording == true` to
+    /// consume the URL exactly once. The caller owns the file and must delete it
+    /// after the share/save sheet is dismissed.
+    func consumePendingRecording() -> URL? {
+        let url = pendingRecordingURL
+        pendingRecordingURL = nil
+        hasPendingRecording = false
+        return url
     }
 
     // MARK: - Simulation Loop
