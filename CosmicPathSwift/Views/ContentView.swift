@@ -25,6 +25,10 @@ struct ContentView: View {
     @State private var viewModel = SimulationViewModel()
     /// Tracks the current canvas size for passing to the ViewModel on setup/reset.
     @State private var canvasSize: CGSize = .zero
+    /// File URL of the most recently completed recording, held until the sheet is dismissed.
+    @State private var pendingRecordingURL: URL?
+    /// Controls presentation of the share sheet once a recording is ready.
+    @State private var showShareSheet = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -39,6 +43,25 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        // When stopRecording() writes the clip, consume the URL and show the share sheet.
+        .onChange(of: viewModel.hasPendingRecording) { _, hasRecording in
+            if hasRecording, let url = viewModel.consumePendingRecording() {
+                pendingRecordingURL = url
+                showShareSheet = true
+            }
+        }
+        // Share sheet: includes Save Video, AirDrop, Messages, Mail, and all installed apps.
+        // The temp file is deleted once the sheet is dismissed regardless of outcome.
+        .sheet(isPresented: $showShareSheet, onDismiss: {
+            if let url = pendingRecordingURL {
+                try? FileManager.default.removeItem(at: url)
+                pendingRecordingURL = nil
+            }
+        }) {
+            if let url = pendingRecordingURL {
+                VideoShareSheet(url: url)
+            }
+        }
     }
 
     // MARK: - Portrait Layout
@@ -66,8 +89,11 @@ struct ContentView: View {
                         .padding(.horizontal)
                         .padding(.bottom, 4)
 
-                    pauseButton
-                        .padding(.bottom, 16)
+                    HStack(spacing: 16) {
+                        pauseButton
+                        recordButton
+                    }
+                    .padding(.bottom, 16)
                 }
             } else {
                 // Paused/stopped: full controls visible
@@ -112,8 +138,11 @@ struct ContentView: View {
                     }
                     .padding(.horizontal)
 
-                    pauseButton
-                        .padding(.bottom, 8)
+                    HStack(spacing: 16) {
+                        pauseButton
+                        recordButton
+                    }
+                    .padding(.bottom, 8)
                 }
             } else {
                 // Paused/stopped: bottom overlay with metrics and controls
@@ -134,6 +163,28 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea()
+    }
+
+    // MARK: - Record Button
+
+    /// Floating record/stop button shown alongside the pause button while the simulation runs.
+    ///
+    /// Tapping starts or stops a ReplayKit screen recording. A pulsing red icon indicates
+    /// an active recording. When stopped, `hasPendingPreview` triggers the save/share sheet.
+    private var recordButton: some View {
+        Button {
+            if viewModel.isRecording {
+                viewModel.stopRecording()
+            } else {
+                viewModel.startRecording()
+            }
+        } label: {
+            Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
+                .font(.title2)
+                .foregroundStyle(.red)
+                .symbolEffect(.pulse, isActive: viewModel.isRecording)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Pause Button
@@ -198,4 +249,22 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+}
+
+// MARK: - Video Share Sheet
+
+/// UIViewControllerRepresentable wrapper for `UIActivityViewController`.
+///
+/// Presents the system share sheet for a recorded video file, allowing the user
+/// to share via AirDrop, Messages, Mail, or any installed app, and includes
+/// the standard "Save to Photos" activity. The sheet dismisses itself when the
+/// user taps Cancel or completes an activity.
+private struct VideoShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
