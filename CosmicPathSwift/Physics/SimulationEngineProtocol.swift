@@ -82,6 +82,9 @@ protocol SimulationEngineProtocol: AnyObject {
     var body2: CelestialBody { get }
     var metrics: RelativisticMetrics { get }
     var isBlackHoleMode: Bool { get set }
+    /// Particles of material stripped from the planet by tidal forces.
+    /// Projected to canvas space by the ViewModel each frame for rendering.
+    var bleedParticles: [BleedParticle] { get }
 
     func step(dt: Double)
 }
@@ -127,6 +130,7 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// Softening length to prevent numerical divergence at r→0.
     /// Acts as a minimum effective distance in force calculations.
     static let softening: Double = 5.0
+    
 
     /// Visual threshold for black hole classification.
     /// Body1 is rendered as a black hole when its Schwarzschild radius
@@ -136,10 +140,18 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     private(set) var body1: CelestialBody
     private(set) var body2: CelestialBody
     private(set) var metrics = RelativisticMetrics()
+    private(set) var bleedParticles: [BleedParticle] = []
 
     /// When true, enables black hole rendering and event horizon absorption.
     /// When false, body1 is never classified as a black hole regardless of mass.
     var isBlackHoleMode: Bool = false
+
+    /// Initial mass of body2, used to compute the minimum bleed-out threshold
+    /// and to track how much mass has been lost to tidal stripping.
+    private var body2InitialMass: Double = 0
+    /// Counts steps since the last bleed particle was emitted, so we throttle
+    /// emission to one particle every 4 steps (~60 ms at 4 steps/frame, 60 fps).
+    private var bleedStepCounter: Int = 0
 
     // MARK: - Perihelion Precession Tracking
     //
@@ -177,6 +189,7 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     init(body1: CelestialBody, body2: CelestialBody) {
         self.body1 = body1
         self.body2 = body2
+        self.body2InitialMass = body2.mass
         let (a1, a2) = Self.computeAccelerations(body1: body1, body2: body2)
         self.body1.acceleration = a1
         self.body2.acceleration = a2
@@ -312,6 +325,10 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// The same algorithm applies unchanged to 3D; all quantities are
     /// now `Vector3D` and the arithmetic operators extend naturally.
     func step(dt: Double) {
+        // Always advance bleed particles so they continue to spiral in and
+        // fade out even after the planet has been absorbed or destroyed.
+        advanceBleedParticles(dt: dt)
+
         guard !metrics.isAbsorbed else { return }
 
         // Velocity-Verlet position update (works identically for 3D vectors)
@@ -329,16 +346,79 @@ class GravitySimulationEngine: SimulationEngineProtocol {
         body1.velocity = body1.velocity + 0.5 * (oldA1 + newA1) * dt
         body2.velocity = body2.velocity + 0.5 * (oldA2 + newA2) * dt
 
-        // Check for absorption past the event horizon (only in black hole mode).
-        // The separation is the full 3D distance, so inclined orbits are handled correctly.
+        // Check for end-of-simulation conditions.
+        // Separation uses the full 3D distance so inclined orbits are handled correctly.
         let rs = 2.0 * Self.G * body1.mass / Self.cSquared
         let sep = (body2.position - body1.position).magnitude
+
         if isBlackHoleMode && rs >= Self.blackHoleThreshold && sep <= rs {
+            // BH mode: planet crossed the event horizon — absorbed.
             body2.position = body1.position
             body2.velocity = .zero
             metrics.isAbsorbed = true
             updateMetrics()
             return
+        }
+
+        if !isBlackHoleMode {
+            // Normal mode: trigger a collision when the planet reaches the star's
+            // surface. The surface radius is defined as max(2 rₛ, softening) so it
+            // scales with stellar mass while never falling below the softening length.
+            // For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
+            let starSurface = max(2.0 * rs, Self.softening * 2)
+            if sep <= starSurface {
+                body2.position = body1.position
+                body2.velocity = .zero
+                metrics.isAbsorbed = true
+                updateMetrics()
+                return
+            }
+        }
+
+        // MARK: Tidal stripping
+        //
+        // The Roche limit is the distance at which tidal forces from body1
+        // overcome the planet's self-gravity. We use a 10-pixel proxy for the
+        // planet's physical radius; the limit then scales as (M1/M2)^(1/3).
+        //
+        //   r_Roche = R_planet × (2 M1 / M2)^(1/3)
+        //
+        // Inside this limit, the planet loses mass at a rate proportional to how
+        // deeply it is embedded (tideFraction = 1 − r/r_Roche). As M2 shrinks the
+        // Roche limit grows, creating a runaway stripping effect. When mass drops
+        // to 0.5 % of its initial value the planet is considered fully disrupted.
+        let planetProxyRadius: Double = 10.0
+        let rocheLimit = planetProxyRadius * pow(2.0 * body1.mass / max(body2.mass, 0.1), 1.0 / 3.0)
+
+        if sep < rocheLimit {
+            let tideFraction = max(0.0, 1.0 - sep / rocheLimit)
+            let massLossRate = body2.mass * 0.08 * tideFraction
+            body2.mass = max(body2.mass - massLossRate * dt, body2InitialMass * 0.005)
+
+            // Emit one bleed particle every 4 steps to keep the count bounded.
+            bleedStepCounter += 1
+            if bleedStepCounter >= 4 {
+                bleedStepCounter = 0
+                // Initial velocity: planet's velocity scaled down so the particle
+                // is sub-circular and spirals inward, plus a small inward nudge.
+                let inward = (body1.position - body2.position).normalized
+                let particleVel = body2.velocity * 0.75 + inward * (body2.velocity.magnitude * 0.15)
+                bleedParticles.append(BleedParticle(position: body2.position,
+                                                    velocity: particleVel,
+                                                    life: 1.0))
+                if bleedParticles.count > 300 {
+                    bleedParticles.removeFirst()
+                }
+            }
+
+            // Planet fully disrupted — trigger destruction.
+            if body2.mass <= body2InitialMass * 0.005 {
+                body2.position = body1.position
+                body2.velocity = .zero
+                metrics.isAbsorbed = true
+                updateMetrics()
+                return
+            }
         }
 
         // Accumulate proper time from the Schwarzschild metric:
@@ -360,6 +440,29 @@ class GravitySimulationEngine: SimulationEngineProtocol {
 
         trackPrecession()
         updateMetrics()
+    }
+
+    // MARK: - Bleed Particle Advancement
+
+    /// Advances every bleed particle one time step under body1's Newtonian gravity
+    /// and decrements their lifetimes, removing fully-faded ones.
+    ///
+    /// Uses simple Newtonian (not Schwarzschild) gravity for performance — particles
+    /// are visual only and don't need GR precision.
+    private func advanceBleedParticles(dt: Double) {
+        let bleedGM = Self.G * body1.mass
+        for i in bleedParticles.indices.reversed() {
+            let toBody1 = body1.position - bleedParticles[i].position
+            let d = max(toBody1.magnitude, Self.softening)
+            // a = GM/d² × r̂  (toward body1)
+            let acc = (bleedGM / (d * d * d)) * toBody1
+            bleedParticles[i].velocity = bleedParticles[i].velocity + acc * dt
+            bleedParticles[i].position = bleedParticles[i].position + bleedParticles[i].velocity * dt
+            bleedParticles[i].life -= BleedParticle.decayRate * dt
+            if bleedParticles[i].life <= 0 {
+                bleedParticles.remove(at: i)
+            }
+        }
     }
 
     // MARK: - Precession Tracking

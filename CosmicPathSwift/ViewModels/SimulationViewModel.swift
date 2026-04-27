@@ -65,6 +65,10 @@ class SimulationViewModel {
     /// Used by the view to scale body radii proportionally with zoom.
     var coordinateScale: Double = 1.0
 
+    /// Canvas-space positions and opacities of active bleed particles.
+    /// Projected from 3D each frame in `syncState()` for rendering in `SimulationCanvasView`.
+    var bleedParticleData: [(position: CGPoint, opacity: Double)] = []
+
     /// True when body2 (planet) is farther from the camera than body1 (star/BH).
     ///
     /// The canvas uses this to swap the ZStack render order so the closer body
@@ -108,9 +112,15 @@ class SimulationViewModel {
     private var transformer = CoordinateTransformer(canvasSize: .zero)
     private var currentCanvasSize: CGSize = .zero
 
-    /// Tracks the maximum 3D distance any body reaches from the origin, used to
+    /// Tracks the maximum distance any body reaches from the centre of mass, used to
     /// dynamically zoom out so the entire orbit always fits on screen.
     private var maxExtent: Double = 0
+
+    /// Instantaneous centre of mass in simulation space, updated every frame.
+    /// Used as the `centerOffset` for the coordinate transformer so the view
+    /// stays centred on the two-body system even when numerical integration
+    /// causes the CoM to drift slightly from the origin over many orbits.
+    private var currentCOM: Vector3D = .zero
 
     // MARK: - Init
 
@@ -147,10 +157,17 @@ class SimulationViewModel {
     /// - At r → 1.5 rₛ: diverges (photon sphere, no massive-particle orbit).
     /// - At r = 3 rₛ (ISCO): maximum stable circular speed.
     ///
-    /// ## ISCO Clamping
+    /// ## ISCO and Unstable Orbits
     ///
-    /// The initial separation is clamped to at least 3.5 rₛ (slightly above
-    /// the ISCO at 3 rₛ) to ensure the orbit starts in a stable regime.
+    /// The initial separation is only clamped to `softening * 2` — no ISCO floor.
+    /// This means the user can place the planet inside the ISCO (r < 3 rₛ), where
+    /// no stable circular orbit exists. When r < ISCO, the initial tangential
+    /// velocity is set to the Newtonian value √(GM/r) rather than the Schwarzschild
+    /// formula (which diverges near the photon sphere). The sub-circular GR speed
+    /// causes the orbit to decay and plunge toward the central body.
+    ///
+    /// - Normal mode: a "star collision" fires when sep ≤ star surface radius.
+    /// - BH mode: an "absorption" fires when sep ≤ rₛ (existing check).
     ///
     /// ## Momentum Conservation
     ///
@@ -159,9 +176,22 @@ class SimulationViewModel {
     func setup(canvasSize: CGSize) {
         currentCanvasSize = canvasSize
 
-        // Reserve extra room beyond the initial separation so the full orbit
-        // (which may be eccentric) fits on screen without waiting for dynamic zoom.
-        maxExtent = config.simulationSeparation * CelestialConstants.orbitMarginFactor
+        // Compute initial CoM: body1 starts at origin, body2 at (separation, 0, 0).
+        // CoM = mass2 * separation / totalMass along x.
+        let mass1 = config.simulationMass1
+        let mass2 = config.simulationMass2
+        let separation = config.simulationSeparation
+        let totalMass = mass1 + mass2
+        let initialCOM = Vector3D(x: mass2 * separation / totalMass, y: 0, z: 0)
+        currentCOM = initialCOM
+
+        // Reserve extra room based on the farthest body's distance from the CoM,
+        // not from the origin. This prevents the initial view being too wide when
+        // m2 is comparable to m1 (large planet or black hole mass ratio).
+        // body2 dist from CoM = separation * m1 / total  (the heavier body is farther)
+        // body1 dist from CoM = separation * m2 / total
+        let initialMaxFromCOM = separation * max(mass1, mass2) / totalMass
+        maxExtent = initialMaxFromCOM * CelestialConstants.orbitMarginFactor
 
         // Note: the default camera elevation (π/6 = 30°) compresses the orbit
         // vertically by cos(30°) ≈ 0.87, making a perfectly circular orbit
@@ -171,27 +201,41 @@ class SimulationViewModel {
             canvasSize: canvasSize,
             simulationSeparation: maxExtent,
             azimuth: cameraAzimuth,
-            elevation: cameraElevation
+            elevation: cameraElevation,
+            centerOffset: currentCOM
         )
 
-        let mass1 = config.simulationMass1
-        let mass2 = config.simulationMass2
-        let separation = config.simulationSeparation
-
-        // Clamp initial separation to above ISCO (3 rₛ) for orbital stability.
-        // We use 3.5 rₛ to provide a small margin above the marginally stable orbit.
+        // Only prevent numerical blow-up at very small separations; no ISCO floor.
+        // Allowing r < ISCO lets the user create genuinely unstable/plunging orbits.
         let rs = 2.0 * GravitySimulationEngine.G * mass1 / GravitySimulationEngine.cSquared
-        let minSeparation = max(3.5 * rs, GravitySimulationEngine.softening * 2)
+        let minSeparation = GravitySimulationEngine.softening * 2
         let safeSeparation = max(separation, minSeparation)
 
         // Body1 at the origin; body2 along the x-axis at the initial separation.
         let pos1 = Vector3D(x: 0, y: 0, z: 0)
         let pos2 = Vector3D(x: safeSeparation, y: 0, z: 0)
 
-        // Schwarzschild circular orbit speed: v = √(GM / (r - 1.5 rₛ))
-        // The denominator (r - 1.5 rₛ) diverges at the photon sphere.
-        let denominator = max(safeSeparation - 1.5 * rs, 0.1)
-        let orbitalSpeed = sqrt(GravitySimulationEngine.G * mass1 / denominator)
+        // Choose initial tangential speed based on whether r is above or below the ISCO.
+        //
+        // Above ISCO (r ≥ 3 rₛ): use the Schwarzschild circular speed
+        //     v = √(GM / (r − 1.5 rₛ))
+        // which exactly cancels the effective-potential gradient and gives a
+        // stable nearly-circular orbit.
+        //
+        // Below ISCO (r < 3 rₛ): the Schwarzschild formula diverges toward
+        // the photon sphere (r = 1.5 rₛ) and gives unphysically large speed
+        // that would fling the planet away rather than letting it plunge.
+        // Instead we use the Newtonian speed √(GM/r), which is sub-circular
+        // in GR terms. The extra inward pull from the -3GML²/(c²r⁴) term then
+        // dominates and the orbit decays toward the central body.
+        let isco = 3.0 * rs
+        let orbitalSpeed: Double
+        if safeSeparation >= isco {
+            let denominator = safeSeparation - 1.5 * rs
+            orbitalSpeed = sqrt(GravitySimulationEngine.G * mass1 / denominator)
+        } else {
+            orbitalSpeed = sqrt(GravitySimulationEngine.G * mass1 / safeSeparation)
+        }
 
         // Apply inclination: rotate the tangential velocity from the y-axis
         // toward the z-axis by the inclination angle i.
@@ -275,7 +319,8 @@ class SimulationViewModel {
             canvasSize: size,
             simulationSeparation: maxExtent,
             azimuth: cameraAzimuth,
-            elevation: cameraElevation
+            elevation: cameraElevation,
+            centerOffset: currentCOM
         )
         syncState()
     }
@@ -298,7 +343,8 @@ class SimulationViewModel {
             canvasSize: currentCanvasSize,
             simulationSeparation: maxExtent,
             azimuth: cameraAzimuth,
-            elevation: cameraElevation
+            elevation: cameraElevation,
+            centerOffset: currentCOM
         )
         syncState()
     }
@@ -323,7 +369,8 @@ class SimulationViewModel {
             canvasSize: currentCanvasSize,
             simulationSeparation: maxExtent,
             azimuth: cameraAzimuth,
-            elevation: cameraElevation
+            elevation: cameraElevation,
+            centerOffset: currentCOM
         )
         syncState()
     }
@@ -405,29 +452,52 @@ class SimulationViewModel {
     private func syncState() {
         guard let engine else { return }
 
-        let extent1 = engine.body1.position.magnitude
-        let extent2 = engine.body2.position.magnitude
+        // Compute instantaneous centre of mass. Even if numerical integration
+        // causes tiny momentum drift each step, measuring extents from the CoM
+        // rather than from the fixed origin prevents the zoom from ratcheting
+        // outward orbit by orbit as the CoM slowly walks away from the origin.
+        let totalMass = engine.body1.mass + engine.body2.mass
+        let com = (engine.body1.position * engine.body1.mass
+                 + engine.body2.position * engine.body2.mass) * (1.0 / totalMass)
+        let previousCOM = currentCOM
+        currentCOM = com
+
+        let extent1 = (engine.body1.position - com).magnitude
+        let extent2 = (engine.body2.position - com).magnitude
         let currentMax = max(extent1, extent2)
 
-        let minExtent = config.simulationSeparation * CelestialConstants.orbitMarginFactor
-        let targetExtent = max(currentMax * 1.1, minExtent)
+        // minExtent based on the CoM-relative initial half-separation so the view
+        // is correctly sized for all mass ratios (not just m1 >> m2).
+        let configTotal = config.simulationMass1 + config.simulationMass2
+        let initialMaxFromCOM = config.simulationSeparation
+            * max(config.simulationMass1, config.simulationMass2) / configTotal
+        let minExtent = initialMaxFromCOM * CelestialConstants.orbitMarginFactor
+
+        // 15% headroom around the farthest body so neither sits at the canvas edge.
+        let targetExtent = max(currentMax * 1.15, minExtent)
         let previousExtent = maxExtent
 
         if targetExtent > maxExtent {
-            // Zoom out immediately to keep bodies on screen
+            // Zoom out immediately so bodies are never clipped off-screen.
             maxExtent = targetExtent
         } else {
-            // Slowly decay toward the target so zoom recovers over ~3 seconds at 60 fps
-            let decayRate = 0.995
+            // Zoom in at different rates depending on state:
+            //   • Active orbit: 0.999/frame ≈ 6% oscillation for a 2-second eccentric orbit.
+            //     Slow recovery (~13 s to halve) keeps the view stable rather than "bouncing"
+            //     as the planet oscillates between perihelion and aphelion.
+            //   • After absorption: 0.96/frame recovers in < 0.5 s once the planet is gone,
+            //     so the canvas snaps back rather than staying zoomed out indefinitely.
+            let decayRate = metrics.isAbsorbed ? 0.96 : 0.999
             maxExtent = max(targetExtent, maxExtent * decayRate)
         }
 
-        if maxExtent != previousExtent {
+        if maxExtent != previousExtent || currentCOM != previousCOM {
             transformer = CoordinateTransformer(
                 canvasSize: currentCanvasSize,
                 simulationSeparation: maxExtent,
                 azimuth: cameraAzimuth,
-                elevation: cameraElevation
+                elevation: cameraElevation,
+                centerOffset: currentCOM
             )
         }
 
@@ -444,6 +514,11 @@ class SimulationViewModel {
         let depth1 = transformer.depthOf(engine.body1.position)
         let depth2 = transformer.depthOf(engine.body2.position)
         planetIsBehindStar = depth2 > depth1
+
+        // Project bleed particles from 3D simulation space to 2D canvas coordinates.
+        bleedParticleData = engine.bleedParticles.map { p in
+            (position: transformer.simulationToCanvas(p.position), opacity: p.life)
+        }
 
         metrics = engine.metrics
         coordinateScale = transformer.scale
