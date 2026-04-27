@@ -86,6 +86,27 @@ struct SimulationCanvasView: View {
                     .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 }
 
+                // Bleed particles: tidal-stripped material spiraling toward the central body.
+                // Rendered with a Canvas for performance (up to 300 small dots per frame).
+                // Color transitions from cyan (freshly emitted) to orange (older, heated).
+                Canvas { context, _ in
+                    for particle in viewModel.bleedParticleData {
+                        let t = 1.0 - particle.opacity  // 0 = fresh, 1 = old
+                        let color = Color(
+                            red:   min(1.0, t * 2.0),
+                            green: max(0.0, 1.0 - t),
+                            blue:  max(0.0, 1.0 - t * 2.0)
+                        ).opacity(particle.opacity * 0.85)
+                        let size: CGFloat = 3
+                        let rect = CGRect(
+                            x: particle.position.x - size / 2,
+                            y: particle.position.y - size / 2,
+                            width: size, height: size
+                        )
+                        context.fill(Path(ellipseIn: rect), with: .color(color))
+                    }
+                }
+
                 // Depth-sorted body rendering: draw the farther body first so the
                 // nearer one always appears on top. Without this swap the planet
                 // would render in front of the star/black hole even when orbiting
@@ -240,15 +261,16 @@ struct SimulationCanvasView: View {
     // MARK: - Absorption Overlay
 
     private var absorptionOverlay: some View {
-        VStack {
+        let isBlackHole = viewModel.metrics.isBlackHole
+        return VStack {
             Spacer()
             HStack {
                 Spacer()
                 VStack(spacing: 4) {
-                    Text("Event Horizon Crossed")
+                    Text(isBlackHole ? "Event Horizon Crossed" : "Collision")
                         .font(.headline.bold())
                         .foregroundStyle(.red)
-                    Text("Object absorbed by black hole")
+                    Text(isBlackHole ? "Object absorbed by black hole" : "Planet collided with the star")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
                 }

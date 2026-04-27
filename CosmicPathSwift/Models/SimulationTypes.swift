@@ -116,6 +116,25 @@ struct CelestialBody {
     static let maxTrailLength = 800
 }
 
+// MARK: - BleedParticle
+
+/// A fragment of material stripped from the planet by tidal forces near the Roche limit.
+///
+/// Each particle is emitted at the planet's position when it enters the Roche limit,
+/// inherits a fraction of the planet's velocity, and then falls freely under the
+/// central body's Newtonian gravity. It fades out over `maxLife` simulation time units.
+struct BleedParticle {
+    var position: Vector3D
+    var velocity: Vector3D
+    /// Normalised remaining lifetime: 1.0 = just emitted, 0.0 = fully faded.
+    var life: Double
+
+    /// Simulation time units a particle lives before fully fading.
+    static let maxLife: Double = 15.0
+    /// Life decrease per simulation time unit (= 1 / maxLife).
+    static let decayRate: Double = 1.0 / maxLife
+}
+
 // MARK: - RelativisticMetrics
 
 /// Observable metrics derived from the Schwarzschild geodesic simulation.

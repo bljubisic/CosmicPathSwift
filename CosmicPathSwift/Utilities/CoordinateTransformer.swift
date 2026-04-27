@@ -67,26 +67,34 @@ struct CoordinateTransformer {
     /// Dragging up/down adjusts this angle, clamped to [-π/2, π/2].
     let elevation: Double
 
+    /// The simulation-space point that maps to the canvas center.
+    /// Set to the instantaneous centre of mass each frame so the view
+    /// stays centred on the two-body system regardless of CoM drift.
+    let centerOffset: Vector3D
+
     // MARK: - Initialiser
 
     /// Creates a transformer for the given canvas size and camera orientation.
     ///
     /// The scale factor is chosen so that a point at distance `simulationSeparation`
-    /// from the origin maps to 40% of the canvas half-dimension. This keeps the
+    /// from `centerOffset` maps to 40% of the canvas half-dimension. This keeps the
     /// initial orbit comfortably inside the canvas with margin for eccentricity.
     ///
     /// - Parameters:
     ///   - canvasSize: The current canvas size in screen points.
-    ///   - simulationSeparation: The extent to fit in 40% of the canvas.
+    ///   - simulationSeparation: The extent (from `centerOffset`) to fit in 40% of the canvas.
     ///     Defaults to `baseAU` (the 1 AU reference distance).
     ///   - azimuth: Camera azimuth in radians. Default is 0 (no horizontal rotation).
     ///   - elevation: Camera elevation in radians. Default is π/6 (30°), giving a
     ///     pleasing 3D perspective on the default flat orbit.
+    ///   - centerOffset: Simulation-space point that maps to the canvas center.
+    ///     Pass the instantaneous CoM to keep the view centred on the system.
     init(
         canvasSize: CGSize,
         simulationSeparation: Double = CelestialConstants.baseAU,
         azimuth: Double = 0,
-        elevation: Double = .pi / 6
+        elevation: Double = .pi / 6,
+        centerOffset: Vector3D = .zero
     ) {
         self.canvasCenter = CGPoint(
             x: canvasSize.width / 2,
@@ -94,6 +102,7 @@ struct CoordinateTransformer {
         )
         self.azimuth = azimuth
         self.elevation = elevation
+        self.centerOffset = centerOffset
 
         // Fit the given separation into 40% of the smaller canvas dimension.
         // Using the minimum of width/height ensures the orbit stays within
@@ -114,17 +123,16 @@ struct CoordinateTransformer {
     ///
     /// See the file header for the full derivation of the two-step rotation.
     func simulationToCanvas(_ v: Vector3D) -> CGPoint {
+        // Shift so the centre of mass (or any chosen focus point) maps to canvas centre.
+        let u = v - centerOffset
+
         // Step 1: Rotate by azimuth φ around the z-axis.
-        // This spins the scene horizontally without changing elevation.
-        let x1 =  cos(azimuth) * v.x + sin(azimuth) * v.y
-        let y1 = -sin(azimuth) * v.x + cos(azimuth) * v.y
+        let x1 =  cos(azimuth) * u.x + sin(azimuth) * u.y
+        let y1 = -sin(azimuth) * u.x + cos(azimuth) * u.y
 
         // Step 2: Apply elevation θ.
-        // When θ=0: screenY = y1  → top-down view, full orbit visible.
-        // When θ=π/2: screenY = z → edge-on view, flat orbit becomes a line.
-        // Intermediate values blend y1 (in-plane) and z (out-of-plane).
         let screenX = x1
-        let screenY = cos(elevation) * y1 + sin(elevation) * v.z
+        let screenY = cos(elevation) * y1 + sin(elevation) * u.z
 
         // Step 3: Scale and translate to canvas coordinates (origin at top-left).
         return CGPoint(
@@ -158,7 +166,8 @@ struct CoordinateTransformer {
     ///
     /// where y' = -sin(φ)·x + cos(φ)·y is the y component after azimuth rotation.
     func depthOf(_ v: Vector3D) -> Double {
-        let y1 = -sin(azimuth) * v.x + cos(azimuth) * v.y
-        return -sin(elevation) * y1 + cos(elevation) * v.z
+        let u = v - centerOffset
+        let y1 = -sin(azimuth) * u.x + cos(azimuth) * u.y
+        return -sin(elevation) * y1 + cos(elevation) * u.z
     }
 }
