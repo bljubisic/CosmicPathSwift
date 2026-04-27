@@ -170,7 +170,9 @@ struct ControlPanelView: View {
                 }
 
                 if viewModel.isRunning {
-                    Text(viewModel.metrics.isAbsorbed ? "Object crossed the event horizon" : "Pause to adjust parameters")
+                    Text(viewModel.metrics.isAbsorbed
+                        ? (viewModel.metrics.isBlackHole ? "Object crossed the event horizon" : "Planet collided with the star")
+                        : "Pause to adjust parameters")
                         .font(.caption2)
                         .foregroundStyle(viewModel.metrics.isAbsorbed ? .red.opacity(0.7) : .white.opacity(0.4))
                 }

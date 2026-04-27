@@ -26,6 +26,7 @@ class MockSimulationEngine: SimulationEngineProtocol {
     var body2: CelestialBody
     var metrics = RelativisticMetrics()
     var isBlackHoleMode: Bool = false
+    var bleedParticles: [BleedParticle] = []
     var stepCount = 0
 
     init(body1: CelestialBody, body2: CelestialBody) {
