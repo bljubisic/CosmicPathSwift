@@ -86,6 +86,9 @@ struct SimulationCanvasView: View {
                     .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 }
 
+                // Centre-of-mass marker: always at the canvas centre in CoM-centred coords.
+                centerOfMassMarker(size: geometry.size)
+
                 // Bleed particles: tidal-stripped material spiraling toward the central body.
                 // Rendered with a Canvas for performance (up to 300 small dots per frame).
                 // Color transitions from cyan (freshly emitted) to orange (older, heated).
@@ -398,6 +401,44 @@ struct SimulationCanvasView: View {
                 Spacer()
             }
             Spacer()
+        }
+    }
+
+    // MARK: - Centre-of-Mass Marker
+
+    /// Draws a small crosshair at the canvas centre, which always coincides with the
+    /// instantaneous centre of mass (the CoordinateTransformer subtracts the CoM before
+    /// projecting, so the CoM maps to canvas centre by construction).
+    ///
+    /// The marker uses a gapped crosshair (two-arm "+" with a small dot in the middle)
+    /// and a "CoM" label, visible in both normal and black-hole modes against the dark
+    /// background.
+    private func centerOfMassMarker(size: CGSize) -> some View {
+        Canvas { context, _ in
+            let cx = size.width  / 2
+            let cy = size.height / 2
+            let arm: CGFloat  = 9
+            let gap: CGFloat  = 3.5
+            let markerColor   = Color.white.opacity(0.55)
+
+            var path = Path()
+            path.move(to: CGPoint(x: cx - arm - gap, y: cy))
+            path.addLine(to: CGPoint(x: cx - gap, y: cy))
+            path.move(to: CGPoint(x: cx + gap, y: cy))
+            path.addLine(to: CGPoint(x: cx + arm + gap, y: cy))
+            path.move(to: CGPoint(x: cx, y: cy - arm - gap))
+            path.addLine(to: CGPoint(x: cx, y: cy - gap))
+            path.move(to: CGPoint(x: cx, y: cy + gap))
+            path.addLine(to: CGPoint(x: cx, y: cy + arm + gap))
+            context.stroke(path, with: .color(markerColor), lineWidth: 0.8)
+
+            let dotRect = CGRect(x: cx - 1.5, y: cy - 1.5, width: 3, height: 3)
+            context.fill(Path(ellipseIn: dotRect), with: .color(markerColor))
+
+            let label = Text("CoM")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.45))
+            context.draw(label, at: CGPoint(x: cx + arm + 14, y: cy - arm - 2))
         }
     }
 
