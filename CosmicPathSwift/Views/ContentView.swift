@@ -207,10 +207,10 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Simple Orbit Simulator")
                     .font(.title2.bold())
-                Text(viewModel.metrics.isBlackHole ? "Black Hole" : "General Relativity")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(
-                        viewModel.metrics.isBlackHole
+                        showsBlackHole
                             ? .red.opacity(0.7)
                             : .white.opacity(0.5)
                     )
@@ -222,28 +222,44 @@ struct ContentView: View {
         .padding(.top, 8)
     }
 
+    /// Black hole styling only applies in 2-body mode.
+    private var showsBlackHole: Bool {
+        !viewModel.isThreeBodyMode && viewModel.metrics.isBlackHole
+    }
+
+    private var subtitle: String {
+        if viewModel.isThreeBodyMode { return "Three-Body Problem" }
+        return viewModel.metrics.isBlackHole ? "Black Hole" : "General Relativity"
+    }
+
     // MARK: - Mass Legend
 
-    /// Color-coded legend showing the current mass label for each celestial body.
-    /// Star/BH is orange/red, planet is cyan — matching the rendered body colors.
+    /// Color-coded legend showing the current mass label for each celestial body,
+    /// matching the rendered body colours: star/BH orange/red and planet cyan in
+    /// 2-body mode, the per-ID palette in 3-body mode.
     private var massLegend: some View {
-        HStack(spacing: 16) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(viewModel.metrics.isBlackHole ? Color.red : Color.orange)
-                    .frame(width: 10, height: 10)
-                Text(viewModel.config.mass1Label)
-                    .font(.caption)
-            }
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.cyan)
-                    .frame(width: 10, height: 10)
-                Text(viewModel.config.mass2Label)
-                    .font(.caption)
+        let labels = viewModel.bodyLabels
+        return HStack(spacing: 16) {
+            ForEach(labels.indices, id: \.self) { index in
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(legendColor(for: index))
+                        .frame(width: 10, height: 10)
+                    Text(labels[index])
+                        .font(.caption)
+                }
             }
         }
         .foregroundStyle(.white)
+    }
+
+    private func legendColor(for index: Int) -> Color {
+        if viewModel.isThreeBodyMode {
+            let ids = viewModel.bodyIDs
+            return BodyView.paletteColor(for: ids.indices.contains(index) ? ids[index] : index)
+        }
+        if index == 0 { return viewModel.metrics.isBlackHole ? .red : .orange }
+        return .cyan
     }
 }
 

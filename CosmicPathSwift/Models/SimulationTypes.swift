@@ -6,7 +6,7 @@
 //  celestial body data, relativistic metrics, and configuration.
 //
 //  This file contains no physics logic — only data structures.
-//  All physics computations are in SimulationEngineProtocol.swift.
+//  Physics lives in NBodyGravity.swift and SimulationEngineProtocol.swift.
 //
 //  ## 3D Coordinate System
 //
@@ -95,6 +95,15 @@ struct Vector3D: Equatable {
     }
 }
 
+// MARK: - BodyKind
+
+/// Rendering category of a celestial body. Physics treats all kinds identically.
+enum BodyKind: Equatable, Sendable {
+    case star
+    case planet
+    case moon
+}
+
 // MARK: - CelestialBody
 
 /// Represents a celestial body with mass, position, velocity, and a trail of past positions.
@@ -103,6 +112,11 @@ struct Vector3D: Equatable {
 /// The trail stores the body's recent history in simulation space; it is
 /// projected to canvas space by `CoordinateTransformer` before rendering.
 struct CelestialBody {
+    /// Stable identifier that survives merges (the surviving body keeps its ID).
+    /// Used to pick per-body colours in 3-body mode and in status overlays.
+    var id: Int = 0
+    /// What the body represents; drives rendered size and gradient style.
+    var kind: BodyKind = .planet
     var mass: Double
     var position: Vector3D
     var velocity: Vector3D
@@ -242,6 +256,106 @@ struct RelativisticMetrics {
     }
 }
 
+// MARK: - SystemMetrics
+
+/// System-wide metrics for 3-body mode, updated by the engine every step.
+///
+/// Unlike `RelativisticMetrics` (which describes body2's orbit around body1),
+/// these describe the whole N-body system and make no assumption about which
+/// body is "central".
+struct SystemMetrics {
+    /// Coordinate time elapsed since the simulation started (simulation units).
+    var elapsedTime: Double = 0
+
+    /// Relative Newtonian energy drift ΔE/E₀.
+    ///
+    /// Energy lost in inelastic merges is excluded, so this tracks only integrator
+    /// error plus the non-conservative part of the GR correction term — it is
+    /// nonzero partly because GR is switched on.
+    var energyDrift: Double = 0
+
+    /// Smallest pairwise separation reached so far (simulation pixels).
+    var closestApproach: Double = .infinity
+
+    /// Largest speed any body has reached so far, as a fraction of c.
+    var maxVelocityFractionOfC: Double = 0
+
+    /// ID of the first body that escaped the system, if any.
+    var ejectedBodyID: Int?
+
+    /// IDs of the most recent merge as (survivor, absorbed), if any.
+    var collision: (Int, Int)?
+
+    /// Short human-readable status for the metrics panel.
+    var statusLabel: String {
+        if collision != nil { return "Merged" }
+        if ejectedBodyID != nil { return "Ejected" }
+        return "Bound"
+    }
+
+    /// Letter label ("A", "B", "C", …) for a body ID, used in overlays and legends.
+    static func letter(for id: Int) -> String {
+        guard let scalar = UnicodeScalar(65 + max(0, id)) else { return "?" }
+        return String(Character(scalar))
+    }
+}
+
+// MARK: - Simulation Mode
+
+/// Top-level scenario: the original star–planet pair or a general 3-body system.
+enum SimulationMode: String, CaseIterable, Equatable, Sendable {
+    case twoBody
+    case threeBody
+
+    var displayName: String {
+        switch self {
+        case .twoBody: return "2-Body"
+        case .threeBody: return "3-Body"
+        }
+    }
+}
+
+/// Initial-condition presets for 3-body mode.
+///
+/// Each preset also carries its own integration settings because close encounters
+/// need finer steps; `stepsPerFrame` compensates so the on-screen pace stays comfortable.
+enum ThreeBodyPreset: String, CaseIterable, Equatable, Sendable {
+    case figureEight
+    case lagrangeTriangle
+    case sunPlanetMoon
+    case pythagorean
+    case custom
+
+    var displayName: String {
+        switch self {
+        case .figureEight: return "Figure-8"
+        case .lagrangeTriangle: return "Lagrange Triangle"
+        case .sunPlanetMoon: return "Sun–Planet–Moon"
+        case .pythagorean: return "Pythagorean (chaotic)"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// Integration sub-step for this preset (simulation time units).
+    var timeStep: Double {
+        switch self {
+        case .figureEight, .lagrangeTriangle, .custom: return 0.03
+        case .sunPlanetMoon: return 0.04
+        // 1e-4 in the preset's dimensionless time (time unit = 1200).
+        case .pythagorean: return 0.12
+        }
+    }
+
+    /// Integration sub-steps per rendered frame for this preset.
+    var stepsPerFrame: Int {
+        switch self {
+        case .figureEight, .lagrangeTriangle, .custom: return 8
+        case .sunPlanetMoon: return 6
+        case .pythagorean: return 200
+        }
+    }
+}
+
 // MARK: - Celestial Constants
 
 /// Astronomical constants and simulation-scale mappings.
@@ -349,6 +463,26 @@ struct SimulationConfig: Equatable {
     /// At 60 fps with 4 steps/frame, the simulation advances 4×0.02 = 0.08
     /// time units per rendered frame.
     var stepsPerFrame: Int = 4
+
+    // MARK: - Mode Selection
+
+    /// Which scenario to simulate. Switching modes re-runs setup.
+    var mode: SimulationMode = .twoBody
+
+    /// Active preset when `mode == .threeBody`.
+    var threeBodyPreset: ThreeBodyPreset = .figureEight
+
+    // MARK: - Custom 3-Body Parameters
+
+    /// Mass multipliers for the three bodies of the Custom preset (one entry per body).
+    var customMassMultipliers: [Double] = [1.0, 1.0, 1.0]
+
+    /// Side-length multiplier of the Custom preset's starting triangle.
+    var customSpreadAU: Double = 1.0
+
+    /// Scales the Lagrange rigid-rotation velocities of the Custom preset.
+    /// 1.0 = rigid rotation; other values give eccentric or chaotic motion.
+    var customVelocityFactor: Double = 1.0
 
     // MARK: - Derived Simulation Values
 

@@ -22,22 +22,22 @@ import Foundation
 
 /// A mock simulation engine for testing the ViewModel in isolation.
 class MockSimulationEngine: SimulationEngineProtocol {
-    var body1: CelestialBody
-    var body2: CelestialBody
+    var bodies: [CelestialBody]
     var metrics = RelativisticMetrics()
+    var systemMetrics = SystemMetrics()
     var isBlackHoleMode: Bool = false
     var bleedParticles: [BleedParticle] = []
     var stepCount = 0
 
-    init(body1: CelestialBody, body2: CelestialBody) {
-        self.body1 = body1
-        self.body2 = body2
+    init(bodies: [CelestialBody]) {
+        self.bodies = bodies
     }
 
     func step(dt: Double) {
         stepCount += 1
-        // Move body2 slightly each step to simulate motion
-        body2.position = body2.position + Vector3D(x: dt, y: 0, z: 0)
+        // Move the last body slightly each step to simulate motion
+        let last = bodies.count - 1
+        bodies[last].position = bodies[last].position + Vector3D(x: dt, y: 0, z: 0)
     }
 }
 
@@ -264,7 +264,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: 0, y: 25, z: 0)
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
         let initialPos = engine.body2.position
 
         engine.step(dt: 0.02)
@@ -288,7 +288,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: 0, y: v * cos(inclination), z: v * sin(inclination))
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
 
         for _ in 0..<100 {
             engine.step(dt: 0.02)
@@ -306,7 +306,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: 0, y: 25, z: 0)
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
 
         #expect(engine.metrics.schwarzschildRadius > 0)
         #expect(engine.metrics.photonSphereRadius > engine.metrics.schwarzschildRadius)
@@ -320,14 +320,14 @@ struct GravitySimulationEngineTests {
 
         // Small mass with black hole mode: rₛ too small → not flagged
         let smallBody = CelestialBody(mass: 100, position: .zero, velocity: .zero)
-        let smallEngine = GravitySimulationEngine(body1: smallBody, body2: orbiter)
+        let smallEngine = GravitySimulationEngine(bodies: [smallBody, orbiter])
         smallEngine.isBlackHoleMode = true
         smallEngine.step(dt: 0)
         #expect(!smallEngine.metrics.isBlackHole)
 
         // Large mass without toggle: not flagged
         let bigBody = CelestialBody(mass: 5000, position: .zero, velocity: .zero)
-        let bigEngine = GravitySimulationEngine(body1: bigBody, body2: orbiter)
+        let bigEngine = GravitySimulationEngine(bodies: [bigBody, orbiter])
         #expect(!bigEngine.metrics.isBlackHole)
 
         // Large mass with toggle: flagged as black hole
@@ -347,7 +347,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: -50, y: 0, z: 0)
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
         engine.isBlackHoleMode = true
         #expect(!engine.metrics.isAbsorbed)
 
@@ -367,7 +367,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: 0, y: 25, z: 0)
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
         #expect(engine.metrics.properTime == 0)
 
         for _ in 0..<100 {
@@ -401,7 +401,7 @@ struct GravitySimulationEngineTests {
             position: Vector3D(x: r, y: 0, z: 0),
             velocity: Vector3D(x: 0, y: v, z: 0)
         )
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
 
         // Total mechanical energy: KE₁ + KE₂ − G·m₁·m₂/r
         func totalEnergy() -> Double {
@@ -437,7 +437,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: 0, y: v, z: 0)
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
 
         for _ in 0..<10000 {
             engine.step(dt: 0.01)
@@ -456,7 +456,7 @@ struct GravitySimulationEngineTests {
             velocity: Vector3D(x: -50, y: 0, z: 0)
         )
 
-        let engine = GravitySimulationEngine(body1: body1, body2: body2)
+        let engine = GravitySimulationEngine(bodies: [body1, body2])
         engine.isBlackHoleMode = true
 
         for _ in 0..<1000 {
@@ -478,9 +478,9 @@ struct GravitySimulationEngineTests {
 struct SimulationViewModelTests {
     @Test func setupCreatesEngine() {
         var engineCreated = false
-        let vm = SimulationViewModel { body1, body2 in
+        let vm = SimulationViewModel { bodies in
             engineCreated = true
-            return MockSimulationEngine(body1: body1, body2: body2)
+            return MockSimulationEngine(bodies: bodies)
         }
 
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -488,8 +488,8 @@ struct SimulationViewModelTests {
     }
 
     @Test func startAndPauseToggleRunning() {
-        let vm = SimulationViewModel { body1, body2 in
-            MockSimulationEngine(body1: body1, body2: body2)
+        let vm = SimulationViewModel { bodies in
+            MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
@@ -501,8 +501,8 @@ struct SimulationViewModelTests {
     }
 
     @Test func resetStopsSimulation() {
-        let vm = SimulationViewModel { body1, body2 in
-            MockSimulationEngine(body1: body1, body2: body2)
+        let vm = SimulationViewModel { bodies in
+            MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
@@ -513,45 +513,53 @@ struct SimulationViewModelTests {
         #expect(!vm.isRunning)
     }
 
-    /// Body1 starts at the origin — must project to canvas center at any camera angle.
-    @Test func body1PositionAtCanvasCenter() {
-        let vm = SimulationViewModel { body1, body2 in
-            MockSimulationEngine(body1: body1, body2: body2)
+    /// The view is centred on the CoM, so body1 (at the origin) sits left of
+    /// centre by the CoM offset m₂·d/(m₁+m₂).
+    @Test func body1OffsetFromCenterByCenterOfMass() {
+        let vm = SimulationViewModel { bodies in
+            MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
-        #expect(vm.body1Position.x == 200)
-        #expect(vm.body1Position.y == 150)
+        let config = vm.config
+        let comX = config.simulationMass2 * config.simulationSeparation
+            / (config.simulationMass1 + config.simulationMass2)
+        #expect(abs(vm.body1Position.x - (200 - comX * vm.coordinateScale)) < 0.01)
+        #expect(abs(vm.body1Position.y - 150) < 0.01)
     }
 
-    /// Body2 starts at (separation, 0, 0).  At azimuth=0 the x-axis maps directly to
-    /// screen-x, so body2Position.x = centerX + separation * scale regardless of elevation.
+    /// Body2 starts at (separation, 0, 0). At azimuth=0 the x-axis maps directly to
+    /// screen-x, so body2Position.x = centerX + (separation − comX)·scale at any elevation.
     @Test func body2PositionOffsetFromCenter() {
-        let vm = SimulationViewModel { body1, body2 in
-            MockSimulationEngine(body1: body1, body2: body2)
+        let vm = SimulationViewModel { bodies in
+            MockSimulationEngine(bodies: bodies)
         }
         vm.config.separationAU = 100.0 / CelestialConstants.baseAU
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
-        // Body2 is on the x-axis (y=0, z=0). Azimuth rotation maps x→screenX unchanged.
-        // Elevation blend: screenY = cos(θ)*y' + sin(θ)*z = 0. So y stays at center.
-        let expectedX = 200.0 + vm.config.simulationSeparation * vm.coordinateScale
+        let config = vm.config
+        let comX = config.simulationMass2 * config.simulationSeparation
+            / (config.simulationMass1 + config.simulationMass2)
+        let expectedX = 200.0 + (config.simulationSeparation - comX) * vm.coordinateScale
         #expect(abs(vm.body2Position.x - expectedX) < 0.01)
         #expect(abs(vm.body2Position.y - 150) < 0.01)
     }
 
-    /// Rotating the camera should not change body1's canvas position (it is at the origin).
-    @Test func rotateCameraPreservesOriginProjection() {
-        let vm = SimulationViewModel { body1, body2 in
-            MockSimulationEngine(body1: body1, body2: body2)
+    /// The projection is linear, so the mass-weighted mean of the canvas positions
+    /// is the projected CoM — which must stay at the canvas centre after rotation.
+    @Test func rotateCameraKeepsCenterOfMassAtCanvasCenter() {
+        let vm = SimulationViewModel { bodies in
+            MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
 
         vm.rotateCamera(deltaAzimuth: 0.5, deltaElevation: 0.3)
 
-        // Origin always projects to canvas center
-        #expect(vm.body1Position.x == 200)
-        #expect(vm.body1Position.y == 150)
+        let totalMass = vm.bodyMasses.reduce(0, +)
+        let comX = zip(vm.bodyPositions, vm.bodyMasses).reduce(0.0) { $0 + $1.0.x * $1.1 } / totalMass
+        let comY = zip(vm.bodyPositions, vm.bodyMasses).reduce(0.0) { $0 + $1.0.y * $1.1 } / totalMass
+        #expect(abs(comX - 200) < 0.01)
+        #expect(abs(comY - 150) < 0.01)
     }
 }
 

@@ -2,8 +2,9 @@
 //  MetricsPanelView.swift
 //  CosmicPathSwift
 //
-//  Displays real-time relativistic metrics: time dilation,
-//  precession, velocity fraction of c, and Lorentz gamma / Schwarzschild radius.
+//  Displays real-time metrics. 2-body: time dilation, precession, velocity
+//  fraction of c, and Lorentz gamma / Schwarzschild radius. 3-body: elapsed
+//  time, energy drift, closest approach, peak v/c, and system status.
 //
 
 import SwiftUI
@@ -21,6 +22,55 @@ struct MetricsPanelView: View {
     let viewModel: SimulationViewModel
 
     var body: some View {
+        Group {
+            if viewModel.isThreeBodyMode {
+                threeBodyMetrics
+            } else {
+                twoBodyMetrics
+            }
+        }
+    }
+
+    // MARK: - 3-Body Metrics
+
+    /// Time, ΔE/E (Newtonian, includes the GR term's drift), closest approach,
+    /// peak v/c, and Bound / Ejected / Merged status.
+    private var threeBodyMetrics: some View {
+        let metrics = viewModel.systemMetrics
+        return HStack(spacing: 0) {
+            metricItem(label: "Time", value: String(format: "%.0f", metrics.elapsedTime), color: .white)
+            Spacer()
+            metricItem(
+                label: "\u{0394}E/E (GR)",
+                value: String(format: "%+.2f%%", metrics.energyDrift * 100),
+                color: .yellow
+            )
+            Spacer()
+            metricItem(
+                label: "Closest r",
+                value: metrics.closestApproach.isFinite ? String(format: "%.1f", metrics.closestApproach) : "—",
+                color: .cyan
+            )
+            Spacer()
+            metricItem(
+                label: "max v/c",
+                value: String(format: "%.3f", metrics.maxVelocityFractionOfC),
+                color: .green
+            )
+            Spacer()
+            metricItem(label: "Status", value: metrics.statusLabel, color: statusColor(metrics))
+        }
+    }
+
+    private func statusColor(_ metrics: SystemMetrics) -> Color {
+        if metrics.collision != nil { return .red }
+        if metrics.ejectedBodyID != nil { return .orange }
+        return .green
+    }
+
+    // MARK: - 2-Body Metrics
+
+    private var twoBodyMetrics: some View {
         HStack(spacing: 0) {
             // Num of orbits completed (integer)
             metricItem(
@@ -66,10 +116,6 @@ struct MetricsPanelView: View {
                 )
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     /// Renders a single metric as a vertically stacked value + label pair.
