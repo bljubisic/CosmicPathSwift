@@ -3,7 +3,8 @@
 //  CosmicPathSwift
 //
 //  Canvas rendering: warped spacetime grid, orbital trails, celestial bodies
-//  (star or black hole), Schwarzschild ring, formula overlay, and absorption state.
+//  (stars, planets, moons, or a black hole), Schwarzschild rings, formula
+//  overlay, and absorption / merge / ejection overlays.
 //
 //  ## Camera Control (3D)
 //
@@ -25,13 +26,14 @@ import SwiftUI
 /// Composes multiple visual layers in a ZStack (back to front):
 /// 1. Dark background
 /// 2. Warped spacetime grid (purely visual — does not affect physics)
-/// 3. Black hole effects (lensing glow, accretion disk, ISCO/photon rings)
-/// 4. Schwarzschild radius ring (dashed in normal mode, solid in BH mode)
+/// 3. Black hole effects (2-body only: lensing glow, accretion disk, ISCO/photon rings)
+/// 4. Schwarzschild radius ring(s)
 /// 5. Orbital trails (fade-in from old to new positions)
-/// 6. Gravitational force line connecting the two bodies
-/// 7. Body 1 (star or black hole) and Body 2 (planet)
-/// 8. Formula overlay (Einstein field equation / acceleration formula)
-/// 9. Absorption overlay (shown when body2 crosses the event horizon)
+/// 6. Gravitational force lines connecting every pair of bodies
+/// 7. Bleed particles (2-body tidal stripping)
+/// 8. Bodies, drawn far-to-near (`renderOrder`) for correct occlusion
+/// 9. Formula overlay (field equation / acceleration formula)
+/// 10. Event overlay (absorption, merge, or ejection)
 ///
 /// ## Canvas Sizing
 ///
@@ -56,6 +58,13 @@ struct SimulationCanvasView: View {
     /// 0.005 gives one full 360° turn in ~1257 points of horizontal drag.
     private let cameraDragSensitivity: Double = 0.005
 
+    /// Grid pull (points) toward the heaviest body in 3-body mode; lighter bodies
+    /// pull proportionally less. 3-body masses are too small for the 2-body
+    /// formula (mass × scale × 0.04) to produce a visible warp.
+    private let threeBodyWarpStrength: CGFloat = 8
+
+    private var isThreeBody: Bool { viewModel.isThreeBodyMode }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -63,67 +72,34 @@ struct SimulationCanvasView: View {
 
                 spacetimeGrid(size: geometry.size)
 
-                if viewModel.metrics.isBlackHole {
+                if !isThreeBody && viewModel.metrics.isBlackHole {
                     BlackHoleEffectsView(viewModel: viewModel)
                 }
 
-                schwarzschildRing
-
-                // Orbital trails
-                trailPath(points: viewModel.body1Trail, color: .orange.opacity(0.4))
-                if !viewModel.metrics.isAbsorbed {
-                    trailPath(points: viewModel.body2Trail, color: .cyan.opacity(0.5))
+                if isThreeBody {
+                    threeBodySchwarzschildRings
                 } else {
-                    trailPath(points: viewModel.body2Trail, color: .red.opacity(0.3))
+                    schwarzschildRing
                 }
 
-                // Gravitational force line
-                if !viewModel.metrics.isAbsorbed {
-                    Path { path in
-                        path.move(to: viewModel.body1Position)
-                        path.addLine(to: viewModel.body2Position)
+                ForEach(viewModel.bodyTrails.indices, id: \.self) { index in
+                    trailPath(points: viewModel.bodyTrails[index], color: trailColor(for: index))
+                }
+
+                forceLines
+
+                bleedParticles
+
+                ForEach(viewModel.renderOrder, id: \.self) { index in
+                    if isVisible(index) {
+                        bodyView(for: index)
+                            .position(viewModel.bodyPositions[index])
                     }
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                }
-
-                // Bleed particles: tidal-stripped material spiraling toward the central body.
-                // Rendered with a Canvas for performance (up to 300 small dots per frame).
-                // Color transitions from cyan (freshly emitted) to orange (older, heated).
-                Canvas { context, _ in
-                    for particle in viewModel.bleedParticleData {
-                        let t = 1.0 - particle.opacity  // 0 = fresh, 1 = old
-                        let color = Color(
-                            red:   min(1.0, t * 2.0),
-                            green: max(0.0, 1.0 - t),
-                            blue:  max(0.0, 1.0 - t * 2.0)
-                        ).opacity(particle.opacity * 0.85)
-                        let size: CGFloat = 3
-                        let rect = CGRect(
-                            x: particle.position.x - size / 2,
-                            y: particle.position.y - size / 2,
-                            width: size, height: size
-                        )
-                        context.fill(Path(ellipseIn: rect), with: .color(color))
-                    }
-                }
-
-                // Depth-sorted body rendering: draw the farther body first so the
-                // nearer one always appears on top. Without this swap the planet
-                // would render in front of the star/black hole even when orbiting
-                // behind it from the camera's perspective.
-                if viewModel.planetIsBehindStar && !viewModel.metrics.isAbsorbed {
-                    body2View
-                }
-                body1View
-                if !viewModel.planetIsBehindStar && !viewModel.metrics.isAbsorbed {
-                    body2View
                 }
 
                 formulaOverlay
 
-                if viewModel.metrics.isAbsorbed {
-                    absorptionOverlay
-                }
+                eventOverlay
             }
             .onAppear {
                 canvasSize = geometry.size
@@ -167,80 +143,103 @@ struct SimulationCanvasView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Body 1 (Star or Black Hole)
+    // MARK: - Visibility & Colours
 
-    /// Renders body1 as either a black hole (solid black disc with gradient edge) or
-    /// a radial-gradient star. In black hole mode, the disc diameter equals 2×rₛ
-    /// scaled to canvas coordinates.
-    @ViewBuilder
-    private var body1View: some View {
-        if viewModel.metrics.isBlackHole {
+    /// False for indices out of range and for the absorbed planet in 2-body mode.
+    private func isVisible(_ index: Int) -> Bool {
+        guard viewModel.bodyPositions.indices.contains(index) else { return false }
+        return isThreeBody || index == 0 || !viewModel.metrics.isAbsorbed
+    }
+
+    private func trailColor(for index: Int) -> Color {
+        if isThreeBody, viewModel.bodyIDs.indices.contains(index) {
+            return BodyView.paletteColor(for: viewModel.bodyIDs[index]).opacity(0.5)
+        }
+        if index == 0 { return .orange.opacity(0.4) }
+        return viewModel.metrics.isAbsorbed ? .red.opacity(0.3) : .cyan.opacity(0.5)
+    }
+
+    // MARK: - Bodies
+
+    /// Builds the view for one body.
+    ///
+    /// 2-body: body1 is the classic star (or black hole) and body2 the planet tinted
+    /// by time dilation. 3-body: every body uses its ID's palette colour; size
+    /// follows its kind and mass relative to the preset's mass unit.
+    private func bodyView(for index: Int) -> BodyView {
+        let kind = viewModel.bodyKinds.indices.contains(index) ? viewModel.bodyKinds[index] : .star
+        let multipliers = viewModel.bodyMassMultipliers
+        let multiplier = multipliers.indices.contains(index) ? multipliers[index] : 1
+        let referenceStarMultiplier = isThreeBody ? 1 : (multipliers.first ?? 1)
+        let referenceStar = BodyView.starRadius(massMultiplier: referenceStarMultiplier, zoomSizeScale: zoomSizeScale)
+
+        let radius: CGFloat
+        switch kind {
+        case .star:
+            radius = BodyView.starRadius(massMultiplier: multiplier, zoomSizeScale: zoomSizeScale)
+        case .planet:
+            radius = BodyView.planetRadius(starRadius: referenceStar, massMultiplier: multiplier)
+        case .moon:
+            radius = BodyView.moonRadius(starRadius: referenceStar, massMultiplier: multiplier)
+        }
+
+        if isThreeBody {
+            let id = viewModel.bodyIDs.indices.contains(index) ? viewModel.bodyIDs[index] : index
+            return BodyView(kind: kind, radius: radius, tint: BodyView.paletteColor(for: id))
+        }
+        if index == 0 {
             let rs = CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
-            ZStack {
-                Circle()
-                    .fill(Color.black)
-                    .frame(width: rs * 2, height: rs * 2)
+            return BodyView(kind: kind, radius: radius, tint: nil,
+                            blackHoleRadius: viewModel.metrics.isBlackHole ? rs : nil)
+        }
+        return BodyView(kind: kind, radius: radius, tint: viewModel.metrics.timeDilationColor)
+    }
 
-                Circle()
-                    .stroke(
-                        RadialGradient(
-                            colors: [.clear, .orange.opacity(0.8), .yellow, .white],
-                            center: .center,
-                            startRadius: rs * 0.8,
-                            endRadius: rs
-                        ),
-                        lineWidth: 2
-                    )
-                    .frame(width: rs * 2, height: rs * 2)
-                    .shadow(color: .orange.opacity(0.4), radius: 4)
+    // MARK: - Force Lines
+
+    /// Faint line between every pair of visible bodies.
+    private var forceLines: some View {
+        let visible = viewModel.bodyPositions.indices.filter(isVisible)
+        let positions = viewModel.bodyPositions
+        return Path { path in
+            for i in visible {
+                for j in visible where j > i {
+                    path.move(to: positions[i])
+                    path.addLine(to: positions[j])
+                }
             }
-            .position(viewModel.body1Position)
-        } else {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [.yellow, .orange, .red.opacity(0.8)],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: starRadius
-                    )
+        }
+        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+    }
+
+    // MARK: - Bleed Particles
+
+    /// Tidal-stripped material spiraling toward the central body (2-body only).
+    /// Rendered with a Canvas for performance (up to 300 small dots per frame).
+    /// Color transitions from cyan (freshly emitted) to orange (older, heated).
+    private var bleedParticles: some View {
+        Canvas { context, _ in
+            for particle in viewModel.bleedParticleData {
+                let t = 1.0 - particle.opacity  // 0 = fresh, 1 = old
+                let color = Color(
+                    red:   min(1.0, t * 2.0),
+                    green: max(0.0, 1.0 - t),
+                    blue:  max(0.0, 1.0 - t * 2.0)
+                ).opacity(particle.opacity * 0.85)
+                let size: CGFloat = 3
+                let rect = CGRect(
+                    x: particle.position.x - size / 2,
+                    y: particle.position.y - size / 2,
+                    width: size, height: size
                 )
-                .frame(
-                    width: starRadius * 2,
-                    height: starRadius * 2
-                )
-                .shadow(color: .orange.opacity(0.6), radius: 8)
-                .position(viewModel.body1Position)
+                context.fill(Path(ellipseIn: rect), with: .color(color))
+            }
         }
     }
 
-    // MARK: - Body 2
+    // MARK: - Schwarzschild Rings
 
-    /// Renders the orbiting body (planet) as a radial-gradient circle.
-    /// The gradient color reflects the current gravitational time dilation severity
-    /// (cyan → blue → purple → red as dilation increases).
-    private var body2View: some View {
-        let color = viewModel.metrics.timeDilationColor
-        return Circle()
-            .fill(
-                RadialGradient(
-                    colors: [.white, color, color.opacity(0.8)],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: planetRadius
-                )
-            )
-            .frame(
-                width: planetRadius * 2,
-                height: planetRadius * 2
-            )
-            .shadow(color: color.opacity(0.6), radius: 6)
-            .position(viewModel.body2Position)
-    }
-
-    // MARK: - Schwarzschild Ring
-
-    /// Draws the event horizon boundary circle around body1.
+    /// Draws the event horizon boundary circle around body1 (2-body mode).
     /// In normal mode: dashed, semi-transparent red ring (rₛ is small, decorative).
     /// In black hole mode: solid red ring matching the visible black disc edge.
     private var schwarzschildRing: some View {
@@ -258,21 +257,68 @@ struct SimulationCanvasView: View {
             .position(viewModel.body1Position)
     }
 
-    // MARK: - Absorption Overlay
+    /// Small dashed rₛ = 2Gm/c² ring around every body (3-body mode).
+    /// Rings below half a point are skipped since they would not be visible.
+    private var threeBodySchwarzschildRings: some View {
+        let positions = viewModel.bodyPositions
+        let masses = viewModel.bodyMasses
+        let scale = CGFloat(viewModel.coordinateScale)
+        return Canvas { context, _ in
+            for index in positions.indices where masses.indices.contains(index) {
+                let rs = CGFloat(2 * GravitySimulationEngine.G * masses[index] / GravitySimulationEngine.cSquared) * scale
+                guard rs >= 0.5 else { continue }
+                let rect = CGRect(x: positions[index].x - rs, y: positions[index].y - rs, width: rs * 2, height: rs * 2)
+                context.stroke(Path(ellipseIn: rect), with: .color(.red.opacity(0.3)),
+                               style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            }
+        }
+    }
 
-    private var absorptionOverlay: some View {
-        let isBlackHole = viewModel.metrics.isBlackHole
-        return VStack {
+    // MARK: - Event Overlay
+
+    /// Absorption (2-body) or merge / ejection (3-body) banner, if anything happened.
+    @ViewBuilder
+    private var eventOverlay: some View {
+        if isThreeBody {
+            let metrics = viewModel.systemMetrics
+            if let collision = metrics.collision {
+                eventBanner(
+                    title: "Collision",
+                    details: ["\(letter(collision.0)) + \(letter(collision.1)) merged"]
+                        + (metrics.ejectedBodyID.map { ["Body \(letter($0)) ejected"] } ?? []),
+                    color: .red
+                )
+            } else if let ejected = metrics.ejectedBodyID {
+                eventBanner(title: "Ejection", details: ["Body \(letter(ejected)) ejected"], color: .orange)
+            }
+        } else if viewModel.metrics.isAbsorbed {
+            let isBlackHole = viewModel.metrics.isBlackHole
+            eventBanner(
+                title: isBlackHole ? "Event Horizon Crossed" : "Collision",
+                details: [isBlackHole ? "Object absorbed by black hole" : "Planet collided with the star"],
+                color: .red
+            )
+        }
+    }
+
+    private func letter(_ id: Int) -> String {
+        SystemMetrics.letter(for: id)
+    }
+
+    private func eventBanner(title: String, details: [String], color: Color) -> some View {
+        VStack {
             Spacer()
             HStack {
                 Spacer()
                 VStack(spacing: 4) {
-                    Text(isBlackHole ? "Event Horizon Crossed" : "Collision")
+                    Text(title)
                         .font(.headline.bold())
-                        .foregroundStyle(.red)
-                    Text(isBlackHole ? "Object absorbed by black hole" : "Planet collided with the star")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(color)
+                    ForEach(details, id: \.self) { detail in
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
                 }
                 .padding()
                 .background(Color.black.opacity(0.7))
@@ -285,19 +331,16 @@ struct SimulationCanvasView: View {
 
     // MARK: - Spacetime Grid
 
-    /// Draws a grid of vertical and horizontal lines warped toward body1's position
-    /// to visualize spacetime curvature. This is a purely cosmetic effect — the actual
-    /// physics uses the Schwarzschild metric equations, not grid deformation.
+    /// Draws a grid of vertical and horizontal lines warped toward the bodies to
+    /// visualize spacetime curvature. This is a purely cosmetic effect — the actual
+    /// physics uses the Schwarzschild-corrected force law, not grid deformation.
     ///
     /// Lines are drawn at 50pt intervals and subdivided into 5pt segments. Each segment
-    /// vertex is displaced toward body1 by `warpPoint`, creating the visual impression
-    /// of a gravitational well. The warp strength scales with body1's mass and the
-    /// current coordinate zoom factor.
+    /// vertex is displaced toward every source returned by `warpSources`.
     private func spacetimeGrid(size: CGSize) -> some View {
-        Canvas { context, canvasSize in
+        let sources = warpSources
+        return Canvas { context, canvasSize in
             let step: CGFloat = 50
-            let body1Center = viewModel.body1Position
-            let warpStrength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
             let color = Color.white.opacity(0.06)
 
             var xPos: CGFloat = 0
@@ -306,11 +349,7 @@ struct SimulationCanvasView: View {
                 var y: CGFloat = 0
                 var first = true
                 while y <= canvasSize.height {
-                    let warped = warpPoint(
-                        CGPoint(x: xPos, y: y),
-                        toward: body1Center,
-                        strength: warpStrength
-                    )
+                    let warped = warpPoint(CGPoint(x: xPos, y: y), sources: sources)
                     if first {
                         path.move(to: warped)
                         first = false
@@ -329,11 +368,7 @@ struct SimulationCanvasView: View {
                 var x: CGFloat = 0
                 var first = true
                 while x <= canvasSize.width {
-                    let warped = warpPoint(
-                        CGPoint(x: x, y: yPos),
-                        toward: body1Center,
-                        strength: warpStrength
-                    )
+                    let warped = warpPoint(CGPoint(x: x, y: yPos), sources: sources)
                     if first {
                         path.move(to: warped)
                         first = false
@@ -345,6 +380,23 @@ struct SimulationCanvasView: View {
                 context.stroke(path, with: .color(color), lineWidth: 0.5)
                 yPos += step
             }
+        }
+    }
+
+    /// Points the grid is pulled toward, with their pull strength in points.
+    ///
+    /// 2-body: a single source at body1 with strength mass × zoom × 0.04 (the
+    /// planet's pull is negligible). 3-body: one source per body, mass-weighted
+    /// relative to the heaviest body.
+    private var warpSources: [(center: CGPoint, strength: CGFloat)] {
+        guard isThreeBody else {
+            let strength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
+            return [(viewModel.body1Position, strength)]
+        }
+        let masses = viewModel.bodyMasses
+        let heaviest = max(masses.max() ?? 1, .leastNonzeroMagnitude)
+        return zip(viewModel.bodyPositions, masses).map { position, mass in
+            (position, threeBodyWarpStrength * zoomSizeScale * CGFloat(mass / heaviest))
         }
     }
 
@@ -371,12 +423,14 @@ struct SimulationCanvasView: View {
         }
     }
 
+
     // MARK: - Formula Overlay
 
     /// Displays the governing equations in the top-left corner as a subtle watermark.
     /// Shows the Einstein field equation (Gμν + Λgμν = 8πG/c⁴ Tμν) and either:
-    /// - Normal mode: the Schwarzschild geodesic acceleration formula
-    /// - Black hole mode: the Schwarzschild radius and photon sphere formulas
+    /// - 3-body mode: the pairwise-summed GR-corrected acceleration
+    /// - 2-body black hole mode: the Schwarzschild radius and photon sphere formulas
+    /// - 2-body normal mode: the Schwarzschild geodesic acceleration formula
     private var formulaOverlay: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
@@ -384,7 +438,11 @@ struct SimulationCanvasView: View {
                     Text("G\u{03BC}\u{03BD} + \u{039B}g\u{03BC}\u{03BD} = (8\u{03C0}G/c\u{2074})T\u{03BC}\u{03BD}")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.25))
-                    if viewModel.metrics.isBlackHole {
+                    if isThreeBody {
+                        Text("aᵢ = Σⱼ (−Gmⱼ/rᵢⱼ² − 3GmⱼLᵢⱼ²/c²rᵢⱼ⁴) r̂ᵢⱼ")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.18))
+                    } else if viewModel.metrics.isBlackHole {
                         Text("r\u{209B} = 2GM/c\u{00B2}  r\u{209A}\u{2095} = 1.5r\u{209B}")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.red.opacity(0.3))
@@ -418,35 +476,20 @@ struct SimulationCanvasView: View {
         return max(0.4, min(1.0, ratio))
     }
 
-    /// Star radius: grows slightly with mass multiplier and shrinks with zoom.
-    /// Minimum 6pt so it's always clearly visible.
-    private var starRadius: CGFloat {
-        let baseRadius: CGFloat = 14
-        let massScale = CGFloat(log(viewModel.config.mass1Multiplier + 1)) * 0.5 + 1
-        return max(6, baseRadius * massScale * zoomSizeScale)
-    }
 
-    /// Planet radius: proportionally smaller than the star.
-    /// Real ratio is 109:1 but compressed to ~5:1 for visibility.
-    /// Heavier planet → denser → slightly smaller. Minimum 3pt.
-    private var planetRadius: CGFloat {
-        let baseRatio: CGFloat = 5.0
-        let baseRadius = starRadius / baseRatio
-        let massScale = 1.0 / (CGFloat(log(viewModel.config.mass2Multiplier + 1)) * 0.3 + 1)
-        return max(3, baseRadius * massScale)
-    }
-
-    /// Displaces a grid point toward a center point (body1) to simulate gravitational
-    /// curvature. The displacement is inversely proportional to distance: points near
-    /// the center are pulled more, creating a funnel-like distortion.
-    private func warpPoint(_ point: CGPoint, toward center: CGPoint, strength: CGFloat) -> CGPoint {
-        let dx = center.x - point.x
-        let dy = center.y - point.y
-        let dist = max(sqrt(dx * dx + dy * dy), 1)
-        let warp = strength / dist
-        return CGPoint(
-            x: point.x + dx * warp,
-            y: point.y + dy * warp
-        )
+    /// Displaces a grid point toward every warp source to simulate gravitational
+    /// curvature. Each source pulls by `strength` points along the line to it
+    /// (less within 1 pt), creating a funnel-like distortion around each body.
+    private func warpPoint(_ point: CGPoint, sources: [(center: CGPoint, strength: CGFloat)]) -> CGPoint {
+        var displaced = point
+        for source in sources {
+            let dx = source.center.x - point.x
+            let dy = source.center.y - point.y
+            let dist = max(sqrt(dx * dx + dy * dy), 1)
+            let warp = source.strength / dist
+            displaced.x += dx * warp
+            displaced.y += dy * warp
+        }
+        return displaced
     }
 }
