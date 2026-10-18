@@ -3,8 +3,9 @@
 //  CosmicPathSwift
 //
 //  Simulation controls: start/pause, reset, the 2-Body | 3-Body mode switch,
-//  black hole mode toggle, and parameter sliders for mass, separation, and
-//  orbital inclination (3-body parameters live in ThreeBodyControlsView).
+//  black hole mode toggle, habitable-zone toggle, and parameter sliders for
+//  mass, separation, orbital inclination, and (BH mode) accretion rate
+//  (3-body parameters live in ThreeBodyControlsView).
 //
 //  ## Inclination Slider
 //
@@ -156,6 +157,8 @@ struct ControlPanelView: View {
             viewModel.applyConfigChange(canvasSize: canvasSize)
         }
 
+        habitableZoneToggle
+
         // Parameter sliders (mass/distance use log scale; inclination uses linear)
         VStack(spacing: 8) {
             LogSlider(
@@ -175,10 +178,22 @@ struct ControlPanelView: View {
             LogSlider(
                 label: "Distance",
                 value: $viewModel.config.separationAU,
-                range: (1.0 / 3.0)...3.0,
+                // BH mode reaches 5 AU so the planet can sit in the BH's habitable zone.
+                range: (1.0 / 3.0)...(viewModel.config.isBlackHoleMode ? 5.0 : 3.0),
                 color: .white,
                 displayText: viewModel.config.separationLabel
             )
+            if viewModel.config.isBlackHoleMode {
+                // Accretion-disk brightness as a fraction of the Eddington limit;
+                // sets the black hole's luminosity and so its habitable zone.
+                LogSlider(
+                    label: "Accretion",
+                    value: $viewModel.config.accretionEddingtonFraction,
+                    range: 1e-5...1e-3,
+                    color: .yellow,
+                    displayText: viewModel.config.accretionLabel
+                )
+            }
 
             // Inclination: linear 0°–90° slider.
             // Tilts the orbital plane out of the x-y plane. Drag the
@@ -210,6 +225,35 @@ struct ControlPanelView: View {
         .onChange(of: viewModel.config.inclinationDeg) { _, _ in
             viewModel.applyConfigChange(canvasSize: canvasSize)
         }
+        .onChange(of: viewModel.config.accretionEddingtonFraction) { _, _ in
+            viewModel.applyConfigChange(canvasSize: canvasSize)
+        }
+    }
+
+    // MARK: - Habitable Zone Toggle
+
+    /// Shows or hides the habitable-zone band. Purely visual, so it stays
+    /// enabled while the simulation runs.
+    private var habitableZoneToggle: some View {
+        Toggle(isOn: habitableZoneBinding) {
+            HStack(spacing: 6) {
+                Image(systemName: "circle.dashed")
+                    .foregroundStyle(viewModel.config.showHabitableZone ? .green : .gray)
+                    .font(.system(size: 10))
+                Text("Habitable Zone")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .toggleStyle(.switch)
+        .tint(.green)
+    }
+
+    private var habitableZoneBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.config.showHabitableZone },
+            set: { viewModel.setHabitableZoneVisible($0) }
+        )
     }
 
     // MARK: - Running Hint

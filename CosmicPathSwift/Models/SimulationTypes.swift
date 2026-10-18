@@ -464,6 +464,16 @@ struct SimulationConfig: Equatable {
     /// time units per rendered frame.
     var stepsPerFrame: Int = 4
 
+    // MARK: - Habitable Zone
+
+    /// Whether the habitable-zone band and status badge are drawn (2-body only).
+    var showHabitableZone: Bool = true
+
+    /// Accretion-disk luminosity in black hole mode, as a fraction of the
+    /// Eddington limit. The default puts a 1 M☉ black hole's habitable zone
+    /// (≈ 2.7–3.9 AU) just outside the ISCO.
+    var accretionEddingtonFraction: Double = 2.5e-4
+
     // MARK: - Mode Selection
 
     /// Which scenario to simulate. Switching modes re-runs setup.
@@ -545,5 +555,12 @@ struct SimulationConfig: Equatable {
     /// Formatted display string for orbital inclination.
     var inclinationLabel: String {
         String(format: "%.0f°", inclinationDeg)
+    }
+
+    /// Formatted display string for the accretion Eddington fraction (e.g. "2.5e-4").
+    var accretionLabel: String {
+        let exponent = Int(floor(log10(accretionEddingtonFraction)))
+        let mantissa = accretionEddingtonFraction / pow(10, Double(exponent))
+        return String(format: "%.1fe%d", mantissa, exponent)
     }
 }

@@ -26,14 +26,15 @@ import SwiftUI
 /// Composes multiple visual layers in a ZStack (back to front):
 /// 1. Dark background
 /// 2. Warped spacetime grid (purely visual — does not affect physics)
-/// 3. Black hole effects (2-body only: lensing glow, accretion disk, ISCO/photon rings)
-/// 4. Schwarzschild radius ring(s)
-/// 5. Orbital trails (fade-in from old to new positions)
-/// 6. Gravitational force lines connecting every pair of bodies
-/// 7. Bleed particles (2-body tidal stripping)
-/// 8. Bodies, drawn far-to-near (`renderOrder`) for correct occlusion
-/// 9. Formula overlay (field equation / acceleration formula)
-/// 10. Event overlay (absorption, merge, or ejection)
+/// 3. Habitable-zone band (2-body only, when enabled)
+/// 4. Black hole effects (2-body only: lensing glow, accretion disk, ISCO/photon rings)
+/// 5. Schwarzschild radius ring(s)
+/// 6. Orbital trails (fade-in from old to new positions)
+/// 7. Gravitational force lines connecting every pair of bodies
+/// 8. Bleed particles (2-body tidal stripping)
+/// 9. Bodies, drawn far-to-near (`renderOrder`) for correct occlusion
+/// 10. Formula overlay (field equation / acceleration formula) and habitable-zone badge
+/// 11. Event overlay (absorption, merge, or ejection)
 ///
 /// ## Canvas Sizing
 ///
@@ -72,6 +73,10 @@ struct SimulationCanvasView: View {
 
                 spacetimeGrid(size: geometry.size)
 
+                if !isThreeBody && viewModel.habitableZone != nil {
+                    HabitableZoneView(viewModel: viewModel)
+                }
+
                 if !isThreeBody && viewModel.metrics.isBlackHole {
                     BlackHoleEffectsView(viewModel: viewModel)
                 }
@@ -98,6 +103,10 @@ struct SimulationCanvasView: View {
                 }
 
                 formulaOverlay
+
+                if !isThreeBody {
+                    HabitableZoneBadge(viewModel: viewModel)
+                }
 
                 eventOverlay
             }
@@ -192,7 +201,8 @@ struct SimulationCanvasView: View {
             return BodyView(kind: kind, radius: radius, tint: nil,
                             blackHoleRadius: viewModel.metrics.isBlackHole ? rs : nil)
         }
-        return BodyView(kind: kind, radius: radius, tint: viewModel.metrics.timeDilationColor)
+        return BodyView(kind: kind, radius: radius, tint: viewModel.metrics.timeDilationColor,
+                        isHabitable: viewModel.habitableStatus == .habitable)
     }
 
     // MARK: - Force Lines
