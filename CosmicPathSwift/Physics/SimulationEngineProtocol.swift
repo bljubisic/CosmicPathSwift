@@ -70,17 +70,33 @@
 //    • The Velocity-Verlet integrator is unchanged; it applies the 3D
 //      vectors without modification.
 //
+//  ## N-Body Generalisation
+//
+//  The engine now integrates any number of bodies. The pairwise acceleration
+//  and the integrator live in `NBodyGravity`; the GR term uses the *relative*
+//  velocity of each pair so it does not depend on the reference frame.
+//
+//  Scenario-specific behaviour is split into extension files:
+//    • GravitySimulationEngine+TwoBody.swift   — absorption, tidal stripping,
+//      precession tracking, proper time (only when created with 2 bodies)
+//    • GravitySimulationEngine+ThreeBody.swift — merges, ejection detection,
+//      system metrics (created with any other body count)
+//
 
 import Foundation
 
 // MARK: - Protocol
 
-/// Contract for a two-body gravitational simulation engine.
+/// Contract for an N-body gravitational simulation engine.
 /// Enables dependency injection and testability in the ViewModel.
 protocol SimulationEngineProtocol: AnyObject {
-    var body1: CelestialBody { get }
-    var body2: CelestialBody { get }
+    /// All simulated bodies in a stable order. In 2-body mode index 0 is the
+    /// central body (star / black hole) and index 1 is the orbiting planet.
+    var bodies: [CelestialBody] { get }
+    /// Orbit metrics of body2 around body1 (meaningful in 2-body mode only).
     var metrics: RelativisticMetrics { get }
+    /// System-wide metrics (meaningful in 3-body mode).
+    var systemMetrics: SystemMetrics { get }
     var isBlackHoleMode: Bool { get set }
     /// Particles of material stripped from the planet by tidal forces.
     /// Projected to canvas space by the ViewModel each frame for rendering.
@@ -89,27 +105,30 @@ protocol SimulationEngineProtocol: AnyObject {
     func step(dt: Double)
 }
 
+extension SimulationEngineProtocol {
+    /// The central body in 2-body mode. Kept for code written before N-body support.
+    var body1: CelestialBody { bodies[0] }
+
+    /// The orbiting body in 2-body mode. Falls back to the only remaining body
+    /// if merges have reduced the system to one.
+    var body2: CelestialBody { bodies[min(1, bodies.count - 1)] }
+}
+
 // MARK: - GravitySimulationEngine
 
-/// Production simulation engine using Schwarzschild geodesic equations.
+/// Production simulation engine using Schwarzschild-corrected gravity for every pair.
 ///
-/// Computes gravitational acceleration from the geodesic equation of the
-/// Schwarzschild metric rather than Newtonian gravity with post-Newtonian
-/// corrections. This means the simulation traces actual curved-spacetime
-/// paths (geodesics) rather than applying perturbative force corrections
-/// to flat-space trajectories.
+/// The Cartesian acceleration on body i from body j:
 ///
-/// The Cartesian acceleration on a test particle orbiting mass M:
+///     aᵢ = (−Gmⱼ/r² − 3GmⱼL²/(c²r⁴)) × r̂
 ///
-///     a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
+/// where L = |rᵢⱼ × (vᵢ − vⱼ)| is the pair's specific angular momentum and r̂
+/// points outward from the source. See `NBodyGravity` for the implementation.
 ///
-/// where L = |r × v| is the specific orbital angular momentum (full 3D
-/// cross-product magnitude) and r̂ points outward from the source.
-///
-/// For the two-body case, each body moves on the geodesic of the other
-/// body's Schwarzschild metric, with accelerations scaled by the
-/// respective source mass.
-class GravitySimulationEngine: SimulationEngineProtocol {
+/// Whether the 2-body or the N-body feature set runs is decided once at init
+/// from the body count (`isTwoBodyScenario`), so a 3-body system that merges
+/// down to two bodies keeps its 3-body behaviour.
+final class GravitySimulationEngine: SimulationEngineProtocol {
 
     // MARK: - Physics Constants
     //
@@ -130,433 +149,87 @@ class GravitySimulationEngine: SimulationEngineProtocol {
     /// Softening length to prevent numerical divergence at r→0.
     /// Acts as a minimum effective distance in force calculations.
     static let softening: Double = 5.0
-    
 
     /// Visual threshold for black hole classification.
     /// Body1 is rendered as a black hole when its Schwarzschild radius
     /// exceeds this value in simulation-space pixels.
     static let blackHoleThreshold: Double = 8.0
 
-    private(set) var body1: CelestialBody
-    private(set) var body2: CelestialBody
-    private(set) var metrics = RelativisticMetrics()
-    private(set) var bleedParticles: [BleedParticle] = []
+    // MARK: - State
+    //
+    // Setters are internal (not private) so the scenario extensions in the
+    // +TwoBody and +ThreeBody files can update them; the protocol exposes
+    // them read-only to the ViewModel.
+
+    var bodies: [CelestialBody]
+    var metrics = RelativisticMetrics()
+    var systemMetrics = SystemMetrics()
+    var bleedParticles: [BleedParticle] = []
 
     /// When true, enables black hole rendering and event horizon absorption.
     /// When false, body1 is never classified as a black hole regardless of mass.
+    /// Only affects the 2-body scenario.
     var isBlackHoleMode: Bool = false
 
-    /// Initial mass of body2, used to compute the minimum bleed-out threshold
-    /// and to track how much mass has been lost to tidal stripping.
-    private var body2InitialMass: Double = 0
-    /// Counts steps since the last bleed particle was emitted, so we throttle
-    /// emission to one particle every 4 steps (~60 ms at 4 steps/frame, 60 fps).
-    private var bleedStepCounter: Int = 0
+    /// True when the engine was created with exactly two bodies. Enables the
+    /// star–planet features: absorption, tidal stripping, precession, proper time.
+    let isTwoBodyScenario: Bool
 
-    // MARK: - Perihelion Precession Tracking
-    //
-    // In Newtonian gravity, bound orbits are closed ellipses. The GR correction
-    // term -3GML²/(c²r⁴) causes the perihelion (closest approach point) to
-    // advance each orbit. We detect perihelion passages by monitoring when the
-    // separation stops decreasing, then measure the angular shift between
-    // successive perihelion positions.
-    //
-    // For inclined orbits, the angle is measured in the x-y projection. This
-    // approximates the true in-plane precession for small inclinations.
+    /// Bookkeeping for the 2-body feature set.
+    var twoBodyState = TwoBodyState()
 
-    /// Previous frame's body separation, used to detect perihelion (local minimum)
-    private var previousSeparation: Double = .infinity
-    /// Whether the separation was decreasing last frame
-    private var wasShrinking: Bool = true
-    /// Angle (radians) of the most recent perihelion passage, measured in x-y plane
-    private var lastPerihelionAngle: Double?
-    /// Total accumulated precession in radians (converted to degrees in metrics)
-    private var accumulatedPrecession: Double = 0
-    /// Number of complete orbits detected
-    private var orbitsCompleted: Int = 0
+    /// Bookkeeping for the N-body feature set.
+    var nBodyState: NBodyState
 
-    // MARK: - Proper Time Accumulation
-    //
-    // Proper time τ is the time measured by a clock traveling with body2.
-    // It runs slower than coordinate time t due to both gravitational
-    // time dilation (being in a gravity well) and velocity-based time
-    // dilation (moving through space). Both effects emerge naturally
-    // from the Schwarzschild metric: dτ/dt = √((1 - rₛ/r) - v²/c²).
+    /// - Precondition: `bodies` must not be empty.
+    init(bodies: [CelestialBody]) {
+        precondition(!bodies.isEmpty, "GravitySimulationEngine needs at least one body")
+        let initial = NBodyGravity.withAccelerations(bodies)
+        self.bodies = initial
+        self.isTwoBodyScenario = initial.count == 2
+        self.nBodyState = NBodyState(bodies: initial)
 
-    /// Accumulated proper time of body2 (always ≤ coordinate time)
-    private var accumulatedProperTime: Double = 0
-
-    init(body1: CelestialBody, body2: CelestialBody) {
-        self.body1 = body1
-        self.body2 = body2
-        self.body2InitialMass = body2.mass
-        let (a1, a2) = Self.computeAccelerations(body1: body1, body2: body2)
-        self.body1.acceleration = a1
-        self.body2.acceleration = a2
-        previousSeparation = (body2.position - body1.position).magnitude
-        updateMetrics()
+        if isTwoBodyScenario {
+            twoBodyState.body2InitialMass = initial[1].mass
+            twoBodyState.previousSeparation = (initial[1].position - initial[0].position).magnitude
+            updateMetrics()
+        } else {
+            updateSystemMetrics()
+        }
     }
 
     // MARK: - Acceleration Computation
 
-    /// Computes gravitational accelerations on both bodies using their
-    /// respective Schwarzschild geodesic equations.
+    /// Accelerations on a star–planet pair, as (a1, a2).
     ///
-    /// Each body moves on the geodesic of the other body's metric:
-    /// - body2's acceleration comes from body1's Schwarzschild metric (source mass = body1.mass)
-    /// - body1's acceleration comes from body2's Schwarzschild metric (source mass = body2.mass)
-    ///
-    /// The `separation` vector for each call points **from the source toward the body**
-    /// (outward from the gravitating center). This convention means the Newtonian
-    /// term (-GM/r²) produces inward acceleration when multiplied by the outward r̂.
-    ///
-    /// - Returns: A tuple (a1, a2) of 3D acceleration vectors in simulation coordinates.
+    /// Thin wrapper over `NBodyGravity.accelerations(of:)`, kept for callers
+    /// that work with an explicit pair.
     static func computeAccelerations(
         body1: CelestialBody,
         body2: CelestialBody
     ) -> (Vector3D, Vector3D) {
-        let r12 = body2.position - body1.position
-        let dist = max(r12.magnitude, softening)
-        let rHat = r12.normalized
-
-        // Acceleration on body2 from body1's gravity (geodesic of body1's metric).
-        // Separation points from source (body1) to body (body2) = r12.
-        let a2 = schwarzschildAcceleration(
-            sourceMass: body1.mass,
-            separation: r12,
-            distance: dist,
-            rHat: rHat,
-            velocity: body2.velocity
-        )
-
-        // Acceleration on body1 from body2's gravity (geodesic of body2's metric).
-        // Separation points from source (body2) to body (body1) = -r12.
-        let a1 = schwarzschildAcceleration(
-            sourceMass: body2.mass,
-            separation: -r12,
-            distance: dist,
-            rHat: -rHat,
-            velocity: body1.velocity
-        )
-
-        return (a1, a2)
-    }
-
-    /// Computes the Schwarzschild GR-corrected acceleration on a single body
-    /// in Cartesian coordinates.
-    ///
-    /// ## Derivation
-    ///
-    /// The Schwarzschild geodesic radial equation (in coordinate time) is:
-    ///
-    ///     d²r/dt² = -GM/r² + L²/r³ - 3GML²/(c²r⁴)
-    ///
-    /// where L = |r × v| is the specific angular momentum (full 3D magnitude).
-    /// Converting from polar radial acceleration r̈ to Cartesian acceleration aᵣ:
-    ///
-    ///     aᵣ = r̈ - L²/r³ = -GM/r² - 3GML²/(c²r⁴)
-    ///
-    /// The centrifugal term L²/r³ cancels out — the Cartesian Velocity-Verlet
-    /// integrator handles it naturally via tangential velocity.
-    ///
-    /// ## Cartesian Acceleration (same formula in 2D and 3D)
-    ///
-    ///     a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
-    ///
-    /// - **-GM/r²**: Newtonian gravity (always inward, both 2D and 3D).
-    /// - **-3GML²/(c²r⁴)**: GR curvature correction. L = |r × v| now uses the
-    ///   full 3D cross product, correctly capturing angular momentum for
-    ///   inclined orbits where the angular momentum vector is not purely along z.
-    ///
-    /// - Parameters:
-    ///   - sourceMass: Mass of the gravitating source.
-    ///   - separation: Vector pointing **from the source to the body** (outward).
-    ///   - dist: Scalar distance between the bodies (clamped to softening minimum).
-    ///   - rHat: Unit vector along separation (from source to body).
-    ///   - velocity: Velocity of the body being accelerated.
-    /// - Returns: 3D acceleration vector in Cartesian simulation coordinates.
-    private static func schwarzschildAcceleration(
-        sourceMass M: Double,
-        separation r: Vector3D,
-        distance dist: Double,
-        rHat: Vector3D,
-        velocity v: Vector3D
-    ) -> Vector3D {
-        let GM = G * M
-        let r2 = dist * dist
-        let r4 = r2 * r2
-
-        // Specific angular momentum: L = |r × v| using the full 3D cross product.
-        // In 2D this reduced to the z-component abs(rx*vy - ry*vx). In 3D,
-        // inclined orbits have angular momentum with components along all axes,
-        // all of which contribute to L and hence to the GR correction.
-        let L = r.cross(v).magnitude
-        let L2 = L * L
-
-        // Cartesian radial acceleration:
-        //   a = (-GM/r² - 3GML²/(c²r⁴)) × r̂
-        // The centrifugal term L²/r³ from the polar geodesic equation is NOT
-        // included — it cancels when converting to Cartesian coordinates because
-        // the Velocity-Verlet integrator handles it implicitly via tangential velocity.
-        let aNewton = -GM / r2                       // Newtonian gravity (inward)
-        let aGR = -3.0 * GM * L2 / (cSquared * r4)  // GR correction (inward)
-
-        // Both terms are negative (inward). Multiplying by outward r̂ gives
-        // an acceleration vector pointing toward the source.
-        return (aNewton + aGR) * rHat
+        let accelerations = NBodyGravity.accelerations(of: [body1, body2])
+        return (accelerations[0], accelerations[1])
     }
 
     // MARK: - Simulation Step
 
-    /// Advances the simulation by one time step dt using the Velocity-Verlet
-    /// (Störmer-Verlet) symplectic integrator.
+    /// Advances the simulation by one time step `dt`.
     ///
-    /// ## Velocity-Verlet Algorithm
-    ///
-    /// 1. Update positions:     x(t+dt) = x(t) + v(t)·dt + ½·a(t)·dt²
-    /// 2. Compute new forces:   a(t+dt) = F(x(t+dt)) / m
-    /// 3. Update velocities:    v(t+dt) = v(t) + ½·(a(t) + a(t+dt))·dt
-    ///
-    /// This is a second-order symplectic integrator, meaning it approximately
-    /// conserves the Hamiltonian (total energy) over long timescales. This is
-    /// critical for orbital simulations where energy drift would cause orbits
-    /// to artificially spiral inward or outward.
-    ///
-    /// The same algorithm applies unchanged to 3D; all quantities are
-    /// now `Vector3D` and the arithmetic operators extend naturally.
+    /// Integration is Velocity-Verlet (Störmer-Verlet), a second-order
+    /// symplectic integrator that keeps energy error bounded over long runs —
+    /// essential for orbital simulations. The scenario-specific step wraps the
+    /// shared `integrate(dt:)` with its own collision and bookkeeping logic.
     func step(dt: Double) {
-        // Always advance bleed particles so they continue to spiral in and
-        // fade out even after the planet has been absorbed or destroyed.
-        advanceBleedParticles(dt: dt)
-
-        guard !metrics.isAbsorbed else { return }
-
-        // Velocity-Verlet position update (works identically for 3D vectors)
-        body1.position = body1.position + body1.velocity * dt + 0.5 * body1.acceleration * (dt * dt)
-        body2.position = body2.position + body2.velocity * dt + 0.5 * body2.acceleration * (dt * dt)
-
-        let oldA1 = body1.acceleration
-        let oldA2 = body2.acceleration
-
-        let (newA1, newA2) = Self.computeAccelerations(body1: body1, body2: body2)
-        body1.acceleration = newA1
-        body2.acceleration = newA2
-
-        // Velocity-Verlet velocity update
-        body1.velocity = body1.velocity + 0.5 * (oldA1 + newA1) * dt
-        body2.velocity = body2.velocity + 0.5 * (oldA2 + newA2) * dt
-
-        // Check for end-of-simulation conditions.
-        // Separation uses the full 3D distance so inclined orbits are handled correctly.
-        let rs = 2.0 * Self.G * body1.mass / Self.cSquared
-        let sep = (body2.position - body1.position).magnitude
-
-        if isBlackHoleMode && rs >= Self.blackHoleThreshold && sep <= rs {
-            // BH mode: planet crossed the event horizon — absorbed.
-            body2.position = body1.position
-            body2.velocity = .zero
-            metrics.isAbsorbed = true
-            updateMetrics()
-            return
-        }
-
-        if !isBlackHoleMode {
-            // Normal mode: trigger a collision when the planet reaches the star's
-            // surface. The surface radius is defined as max(2 rₛ, softening) so it
-            // scales with stellar mass while never falling below the softening length.
-            // For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
-            let starSurface = max(2.0 * rs, Self.softening * 2)
-            if sep <= starSurface {
-                body2.position = body1.position
-                body2.velocity = .zero
-                metrics.isAbsorbed = true
-                updateMetrics()
-                return
-            }
-        }
-
-        // MARK: Tidal stripping
-        //
-        // The Roche limit is the distance at which tidal forces from body1
-        // overcome the planet's self-gravity. We use a 10-pixel proxy for the
-        // planet's physical radius; the limit then scales as (M1/M2)^(1/3).
-        //
-        //   r_Roche = R_planet × (2 M1 / M2)^(1/3)
-        //
-        // Inside this limit, the planet loses mass at a rate proportional to how
-        // deeply it is embedded (tideFraction = 1 − r/r_Roche). As M2 shrinks the
-        // Roche limit grows, creating a runaway stripping effect. When mass drops
-        // to 0.5 % of its initial value the planet is considered fully disrupted.
-        let planetProxyRadius: Double = 10.0
-        let rocheLimit = planetProxyRadius * pow(2.0 * body1.mass / max(body2.mass, 0.1), 1.0 / 3.0)
-
-        if sep < rocheLimit {
-            let tideFraction = max(0.0, 1.0 - sep / rocheLimit)
-            let massLossRate = body2.mass * 0.08 * tideFraction
-            body2.mass = max(body2.mass - massLossRate * dt, body2InitialMass * 0.005)
-
-            // Emit one bleed particle every 4 steps to keep the count bounded.
-            bleedStepCounter += 1
-            if bleedStepCounter >= 4 {
-                bleedStepCounter = 0
-                // Initial velocity: planet's velocity scaled down so the particle
-                // is sub-circular and spirals inward, plus a small inward nudge.
-                let inward = (body1.position - body2.position).normalized
-                let particleVel = body2.velocity * 0.75 + inward * (body2.velocity.magnitude * 0.15)
-                bleedParticles.append(BleedParticle(position: body2.position,
-                                                    velocity: particleVel,
-                                                    life: 1.0))
-                if bleedParticles.count > 300 {
-                    bleedParticles.removeFirst()
-                }
-            }
-
-            // Planet fully disrupted — trigger destruction.
-            if body2.mass <= body2InitialMass * 0.005 {
-                body2.position = body1.position
-                body2.velocity = .zero
-                metrics.isAbsorbed = true
-                updateMetrics()
-                return
-            }
-        }
-
-        // Accumulate proper time from the Schwarzschild metric:
-        // dτ/dt = sqrt((1 - rs/r) - v²/c²)
-        let rsOverR = min(rs / max(sep, Self.softening), 0.99)
-        let v2OverC2 = min(body2.velocity.magnitudeSquared / Self.cSquared, 0.99)
-        let metricFactor = max(1.0 - rsOverR - v2OverC2, 0.001)
-        accumulatedProperTime += dt * sqrt(metricFactor)
-
-        // Record 3D trail positions
-        body1.trail.append(body1.position)
-        body2.trail.append(body2.position)
-        if body1.trail.count > CelestialBody.maxTrailLength {
-            body1.trail.removeFirst()
-        }
-        if body2.trail.count > CelestialBody.maxTrailLength {
-            body2.trail.removeFirst()
-        }
-
-        trackPrecession()
-        updateMetrics()
-    }
-
-    // MARK: - Bleed Particle Advancement
-
-    /// Advances every bleed particle one time step under body1's Newtonian gravity
-    /// and decrements their lifetimes, removing fully-faded ones.
-    ///
-    /// Uses simple Newtonian (not Schwarzschild) gravity for performance — particles
-    /// are visual only and don't need GR precision.
-    private func advanceBleedParticles(dt: Double) {
-        let bleedGM = Self.G * body1.mass
-        for i in bleedParticles.indices.reversed() {
-            let toBody1 = body1.position - bleedParticles[i].position
-            let d = max(toBody1.magnitude, Self.softening)
-            // a = GM/d² × r̂  (toward body1)
-            let acc = (bleedGM / (d * d * d)) * toBody1
-            bleedParticles[i].velocity = bleedParticles[i].velocity + acc * dt
-            bleedParticles[i].position = bleedParticles[i].position + bleedParticles[i].velocity * dt
-            bleedParticles[i].life -= BleedParticle.decayRate * dt
-            if bleedParticles[i].life <= 0 {
-                bleedParticles.remove(at: i)
-            }
+        if isTwoBodyScenario {
+            stepTwoBody(dt: dt)
+        } else {
+            stepNBody(dt: dt)
         }
     }
 
-    // MARK: - Precession Tracking
-
-    /// Detects perihelion passages and measures the accumulated precession angle.
-    ///
-    /// ## How It Works
-    ///
-    /// A perihelion (closest approach) occurs when the separation transitions from
-    /// decreasing to increasing — i.e., a local minimum in r(t). We detect this
-    /// by monitoring the sign change in dr/dt.
-    ///
-    /// At each perihelion, we record the angular position θ = atan2(y, x) in the
-    /// x-y plane. For flat orbits (inclination = 0°) this is the exact in-plane
-    /// angle. For inclined orbits it is the projection onto the x-y plane, which
-    /// approximates the true in-plane precession for small inclinations.
-    ///
-    /// The angular difference between successive perihelions should be exactly 2π
-    /// for a closed Newtonian orbit. Any excess (δθ - 2π) is the perihelion
-    /// precession per orbit caused by the GR correction term -3GML²/(c²r⁴).
-    private func trackPrecession() {
-        let r = body2.position - body1.position
-        let currentSep = r.magnitude
-        let isShrinking = currentSep < previousSeparation
-
-        if wasShrinking && !isShrinking {
-            // Project onto x-y plane for angle measurement
-            let angle = atan2(r.y, r.x)
-
-            if let lastAngle = lastPerihelionAngle {
-                var delta = angle - lastAngle
-                if delta < 0 { delta += 2.0 * .pi }
-                let excess = delta - 2.0 * .pi
-                accumulatedPrecession += excess
-                orbitsCompleted += 1
-            }
-            lastPerihelionAngle = angle
-        }
-
-        wasShrinking = isShrinking
-        previousSeparation = currentSep
-    }
-
-    // MARK: - Metrics
-
-    /// Recomputes all observable relativistic metrics from the current state.
-    ///
-    /// ## Computed Quantities
-    ///
-    /// - **Schwarzschild radius** rₛ = 2GM/c²: The event horizon radius.
-    ///
-    /// - **Photon sphere** rₚₕ = 1.5 rₛ = 3GM/c²: Unstable photon orbit radius.
-    ///
-    /// - **ISCO** rᵢₛ = 3 rₛ = 6GM/c²: Innermost stable circular orbit.
-    ///
-    /// - **Gravitational time dilation** √(1 - rₛ/r): From the g₀₀ component
-    ///   of the Schwarzschild metric.
-    ///
-    /// - **Lorentz gamma** γ = 1/√(1 - v²/c²): The special-relativistic factor.
-    ///
-    /// - **Precession angle**: Accumulated perihelion advance in degrees.
-    ///
-    /// - **Proper time**: Total elapsed proper time τ of the orbiting body.
-    ///
-    /// All distance quantities use the full 3D separation `|r1 - r2|`, so
-    /// inclined orbits are handled correctly.
-    private func updateMetrics() {
-        let r = (body2.position - body1.position).magnitude
-        let v2Speed = body2.velocity.magnitude
-
-        // Schwarzschild radius: rₛ = 2GM/c²
-        let rs = 2.0 * Self.G * body1.mass / Self.cSquared
-        metrics.schwarzschildRadius = rs
-        metrics.photonSphereRadius = 1.5 * rs   // 3GM/c²
-        metrics.iscoRadius = 3.0 * rs           // 6GM/c²
-        metrics.isBlackHole = isBlackHoleMode && rs >= Self.blackHoleThreshold
-
-        // Gravitational time dilation from the Schwarzschild metric g₀₀ component:
-        // dτ/dt = √(1 - rₛ/r) for a stationary observer at radius r
-        let ratio = min(rs / max(r, Self.softening), 0.99)
-        metrics.timeDilationFactor = sqrt(1.0 - ratio)
-
-        // Velocity as fraction of c (β = v/c)
-        metrics.velocityFractionOfC = v2Speed / Self.c
-
-        // Lorentz factor: γ = 1/√(1 - β²) where β = v/c
-        let beta2 = min((v2Speed * v2Speed) / Self.cSquared, 0.99)
-        metrics.lorentzGamma = 1.0 / sqrt(1.0 - beta2)
-
-        // Convert accumulated precession from radians to degrees for display
-        metrics.precessionAngle = accumulatedPrecession * 180.0 / .pi
-        metrics.separation = r
-        metrics.properTime = accumulatedProperTime
-        // Expose the perihelion passage counter so the UI can display orbit count
-        metrics.orbitsCompleted = orbitsCompleted
+    /// Velocity-Verlet update of every body (shared by both scenarios).
+    func integrate(dt: Double) {
+        bodies = NBodyGravity.verletStep(bodies, dt: dt)
     }
 }
