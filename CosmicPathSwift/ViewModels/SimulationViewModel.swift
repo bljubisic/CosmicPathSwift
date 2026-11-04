@@ -84,6 +84,48 @@ class SimulationViewModel {
     /// Projected from 3D each frame in `syncState()` for rendering in `SimulationCanvasView`.
     var bleedParticleData: [(position: CGPoint, opacity: Double)] = []
 
+    // MARK: - Habitable Zone State
+
+    /// Canvas-space polygon of the habitable zone's inner (hot) edge, drawn in
+    /// the planet's orbital plane around body1. Empty when no zone is shown.
+    var habitableZoneInnerRing: [CGPoint] = []
+
+    /// Canvas-space polygon of the habitable zone's outer (cold) edge.
+    var habitableZoneOuterRing: [CGPoint] = []
+
+    /// Where the planet currently sits relative to the zone; nil when no zone is
+    /// shown or the planet has been absorbed.
+    var habitableStatus: HabitableStatus?
+
+    /// Planet's equilibrium temperature in kelvin; nil under the same conditions
+    /// as `habitableStatus`.
+    var planetEquilibriumTemperature: Double?
+
+    /// True when even the zone's inner edge lies well beyond the current view.
+    /// The zone is deliberately not included in the zoom extent, so a heavy star
+    /// doesn't shrink the orbit to a dot; the badge reports it instead.
+    var isHabitableZoneOffScreen: Bool = false
+
+    /// Number of vertices in each projected habitable-zone ring.
+    static let habitableZoneRingSamples = 96
+
+    /// The zone counts as off-screen beyond this multiple of the zoom extent.
+    private static let habitableZoneOffScreenFactor = 1.5
+
+    /// Habitable zone of body1 in 2-body mode, or nil in 3-body mode or when hidden.
+    /// Depends only on config, so it is constant during a run.
+    var habitableZone: HabitableZone? {
+        guard !isThreeBodyMode, config.showHabitableZone else { return nil }
+        return HabitableZone.forCentralBody(of: config)
+    }
+
+    /// True in black hole mode when the zone's inner edge lies inside the ISCO,
+    /// where no stable circular orbit exists.
+    var isHabitableZoneInsideISCO: Bool {
+        guard let zone = habitableZone, metrics.isBlackHole else { return false }
+        return zone.innerPx < metrics.iscoRadius
+    }
+
     // MARK: - Two-Body Shims
 
     /// Canvas position of the central body (star / black hole) in 2-body mode.
@@ -264,6 +306,13 @@ class SimulationViewModel {
         setup(canvasSize: canvasSize)
     }
 
+    /// Shows or hides the habitable zone. Only affects rendering, so it works
+    /// while the simulation is running and doesn't restart it.
+    func setHabitableZoneVisible(_ visible: Bool) {
+        config.showHabitableZone = visible
+        syncState()
+    }
+
     // MARK: - Mode & Preset Selection
 
     /// Switches between 2-body and 3-body mode and restarts the simulation.
@@ -419,6 +468,58 @@ class SimulationViewModel {
         metrics = engine.metrics
         systemMetrics = engine.systemMetrics
         coordinateScale = transformer.scale
+
+        updateHabitableZone(bodies)
+    }
+
+    // MARK: - Habitable Zone
+
+    /// Re-projects the habitable-zone rings and updates the planet's status.
+    private func updateHabitableZone(_ bodies: [CelestialBody]) {
+        guard let zone = habitableZone, bodies.count >= 2 else {
+            clearHabitableZone()
+            return
+        }
+        let star = bodies[0]
+        let planet = bodies[1]
+        let normal = orbitalNormal(star: star, planet: planet)
+        habitableZoneInnerRing = projectedRing(center: star.position, normal: normal, radius: zone.innerPx)
+        habitableZoneOuterRing = projectedRing(center: star.position, normal: normal, radius: zone.outerPx)
+        isHabitableZoneOffScreen = zone.innerPx > maxExtent * Self.habitableZoneOffScreenFactor
+
+        if metrics.isAbsorbed {
+            habitableStatus = nil
+            planetEquilibriumTemperature = nil
+        } else {
+            let distanceAU = (planet.position - star.position).magnitude / CelestialConstants.baseAU
+            habitableStatus = zone.status(atDistanceAU: distanceAU)
+            planetEquilibriumTemperature = HabitableZonePhysics.equilibriumTemperature(
+                luminosity: zone.luminosity, distanceAU: distanceAU
+            )
+        }
+    }
+
+    private func clearHabitableZone() {
+        habitableZoneInnerRing = []
+        habitableZoneOuterRing = []
+        habitableStatus = nil
+        planetEquilibriumTemperature = nil
+        isHabitableZoneOffScreen = false
+    }
+
+    /// Unit normal of the planet's orbital plane, (r₂ − r₁) × (v₂ − v₁).
+    /// Conserved under the central GR force, so the band follows any inclination.
+    /// Falls back to ẑ when degenerate (e.g. after absorption).
+    private func orbitalNormal(star: CelestialBody, planet: CelestialBody) -> Vector3D {
+        let angularMomentum = (planet.position - star.position).cross(planet.velocity - star.velocity)
+        guard angularMomentum.magnitude > 1e-9 else { return Vector3D(x: 0, y: 0, z: 1) }
+        return angularMomentum.normalized
+    }
+
+    private func projectedRing(center: Vector3D, normal: Vector3D, radius: Double) -> [CGPoint] {
+        HabitableZonePhysics.ringPoints(
+            center: center, normal: normal, radius: radius, samples: Self.habitableZoneRingSamples
+        ).map(transformer.simulationToCanvas)
     }
 
     /// Re-centres on the CoM and adjusts zoom so every tracked body fits.

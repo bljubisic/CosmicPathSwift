@@ -21,6 +21,8 @@ struct BodyView: View {
     let tint: Color?
     /// Event-horizon radius in canvas points when this body is a black hole.
     var blackHoleRadius: CGFloat?
+    /// Draws a soft green halo while the planet sits in the habitable zone.
+    var isHabitable: Bool = false
 
     var body: some View {
         if let rs = blackHoleRadius {
@@ -62,6 +64,14 @@ struct BodyView: View {
             .fill(RadialGradient(colors: colors, center: .center, startRadius: 0, endRadius: radius))
             .frame(width: radius * 2, height: radius * 2)
             .shadow(color: glow.opacity(0.6), radius: kind == .star ? 8 : 6)
+            .background {
+                if isHabitable {
+                    Circle()
+                        .fill(Color.green.opacity(0.35))
+                        .frame(width: radius * 4, height: radius * 4)
+                        .blur(radius: radius * 0.8)
+                }
+            }
     }
 
     // MARK: - Palette
