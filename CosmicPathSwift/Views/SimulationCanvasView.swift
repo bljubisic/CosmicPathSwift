@@ -65,26 +65,32 @@ struct SimulationCanvasView: View {
     private let threeBodyWarpStrength: CGFloat = 8
 
     private var isThreeBody: Bool { viewModel.isThreeBodyMode }
+    /// Rendering options from the Advanced sheet.
+    private var display: DisplaySettings { viewModel.config.advanced.display }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.black.opacity(0.95)
 
-                spacetimeGrid(size: geometry.size)
+                if display.showSpacetimeGrid {
+                    spacetimeGrid(size: geometry.size)
+                }
 
                 if !isThreeBody && viewModel.habitableZone != nil {
                     HabitableZoneView(viewModel: viewModel)
                 }
 
                 if !isThreeBody && viewModel.metrics.isBlackHole {
-                    BlackHoleEffectsView(viewModel: viewModel)
+                    BlackHoleEffectsView(viewModel: viewModel, showsRadii: display.showRelativisticRadii)
                 }
 
-                if isThreeBody {
-                    threeBodySchwarzschildRings
-                } else {
-                    schwarzschildRing
+                if display.showRelativisticRadii {
+                    if isThreeBody {
+                        threeBodySchwarzschildRings
+                    } else {
+                        schwarzschildRing
+                    }
                 }
 
                 ForEach(viewModel.bodyTrails.indices, id: \.self) { index in
@@ -92,7 +98,9 @@ struct SimulationCanvasView: View {
                 }
 
                 // Centre-of-mass marker: always at the canvas centre in CoM-centred coords.
-                centerOfMassMarker(size: geometry.size)
+                if display.showCenterOfMass {
+                    centerOfMassMarker(size: geometry.size)
+                }
 
                 // Bleed particles: tidal-stripped material spiraling toward the central body.
                 // Rendered with a Canvas for performance (up to 300 small dots per frame).

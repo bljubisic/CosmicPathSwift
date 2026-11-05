@@ -494,6 +494,11 @@ struct SimulationConfig: Equatable {
     /// 1.0 = rigid rotation; other values give eccentric or chaotic motion.
     var customVelocityFactor: Double = 1.0
 
+    // MARK: - Advanced
+
+    /// Settings from the Advanced sheet. Kept across Reset (see `SimulationViewModel.reset`).
+    var advanced = AdvancedSettings()
+
     // MARK: - Derived Simulation Values
 
     /// The simulation mass for body 1 (central body).
@@ -575,4 +580,32 @@ struct RecordingItem: Identifiable, Equatable, Sendable {
     /// Temporary `.mp4` file written by ReplayKit.
     let url: URL
     var id: URL { url }
+}
+
+// MARK: - Advanced Settings
+
+/// Options from the Advanced sheet, for experienced users.
+///
+/// Stored on `SimulationConfig.advanced`. Unlike the basic sliders, these survive
+/// Reset; "Restore defaults" in the sheet returns them to `AdvancedSettings()`.
+/// The defaults reproduce the app's standard behaviour exactly.
+struct AdvancedSettings: Equatable, Codable, Sendable {
+    /// `UserDefaults` key for the opt-in that shows the Advanced button.
+    static let optInStorageKey = "advancedMode"
+
+    /// Rendering-only options. They take effect immediately, even while running.
+    var display = DisplaySettings()
+}
+
+/// Rendering-only options from the Advanced sheet. None of these affect the physics.
+struct DisplaySettings: Equatable, Codable, Sendable {
+    /// Draw the warped spacetime grid behind the bodies.
+    var showSpacetimeGrid: Bool = true
+
+    /// Draw the centre-of-mass crosshair at the canvas centre.
+    var showCenterOfMass: Bool = true
+
+    /// Draw the Schwarzschild-radius rings, plus the photon sphere and ISCO
+    /// rings in black hole mode.
+    var showRelativisticRadii: Bool = true
 }

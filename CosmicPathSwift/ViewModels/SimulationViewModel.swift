@@ -269,7 +269,9 @@ class SimulationViewModel {
     }
 
     /// Stops the simulation and restores defaults. The selected mode and 3-body
-    /// preset are kept so Reset restarts the scenario the user is looking at.
+    /// preset are kept so Reset restarts the scenario the user is looking at,
+    /// and the Advanced settings are kept so experienced users don't have to
+    /// re-enter them (use `restoreAdvancedDefaults()` for that).
     func reset(canvasSize: CGSize) {
         // Silently discard any in-progress recording rather than surfacing
         // a save/share sheet mid-reset, which would be jarring for the user.
@@ -284,6 +286,7 @@ class SimulationViewModel {
         var defaults = SimulationConfig()
         defaults.mode = config.mode
         defaults.threeBodyPreset = config.threeBodyPreset
+        defaults.advanced = config.advanced
         config = defaults
         applyIntegrationSettings()
 
@@ -304,6 +307,12 @@ class SimulationViewModel {
     /// Reinitialises the simulation with current config without changing run state.
     func applyConfigChange(canvasSize: CGSize) {
         setup(canvasSize: canvasSize)
+    }
+
+    /// Returns every Advanced setting to its default ("Restore defaults" in the sheet).
+    /// Only display settings exist so far, so nothing needs to be re-simulated.
+    func restoreAdvancedDefaults() {
+        config.advanced = AdvancedSettings()
     }
 
     /// Shows or hides the habitable zone. Only affects rendering, so it works

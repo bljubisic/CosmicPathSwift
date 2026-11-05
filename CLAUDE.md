@@ -45,7 +45,7 @@ ContentView  (GeometryReader → portrait or landscape layout)
 
 **Scaled physics constants** — `G = 500`, `c = 200` (not SI units). Mass multipliers in `SimulationConfig` map to `CelestialConstants.baseSolarMass / baseEarthMass` internal values. Black hole mode switches `body1.mass` to `blackHoleSolarMass = 5000` to make the Schwarzschild radius visually meaningful (threshold: `rs > 8px`).
 
-**Simulation loop** — A `Timer` at 60 fps calls `tick()`, which runs `stepsPerFrame = 4` Velocity-Verlet integration steps per frame. The integrator is in `GravitySimulationEngine.step(dt:)` using the 1PN Einstein-Infeld-Hoffmann equation.
+**Simulation loop** — A `Timer` at 60 fps calls `tick()`, which runs `stepsPerFrame = 4` Velocity-Verlet integration steps per frame. The integrator is in `GravitySimulationEngine.step(dt:)`; the GR force (`NBodyGravity.pairAcceleration`) is Newtonian gravity plus a Schwarzschild-style −3GmL²/(c²r⁴) correction, which gives the correct perihelion precession but is not the full 1PN Einstein-Infeld-Hoffmann equations.
 
 **Orientation layout** — `ContentView` uses `GeometryReader` to detect landscape (`width > height`) and switches layouts. Landscape hides mass/distance sliders and the black hole toggle (`showParameterControls: false` on `ControlPanelView`).
 

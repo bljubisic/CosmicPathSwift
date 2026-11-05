@@ -25,6 +25,10 @@ struct ContentView: View {
     @State private var viewModel = SimulationViewModel()
     /// Tracks the current canvas size for passing to the ViewModel on setup/reset.
     @State private var canvasSize: CGSize = .zero
+    /// Whether the Advanced sheet is open.
+    @State private var isShowingAdvanced = false
+    /// Opt-in that reveals the Advanced button (toggled in `ControlPanelView`).
+    @AppStorage(AdvancedSettings.optInStorageKey) private var isAdvancedEnabled = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -44,6 +48,9 @@ struct ContentView: View {
         // the view model deletes the temp file regardless of outcome.
         .sheet(item: $viewModel.pendingRecording) { recording in
             VideoShareSheet(url: recording.url)
+        }
+        .sheet(isPresented: $isShowingAdvanced) {
+            AdvancedControlsView(viewModel: viewModel)
         }
     }
 
@@ -75,6 +82,7 @@ struct ContentView: View {
                     HStack(spacing: 16) {
                         pauseButton
                         recordButton
+                        floatingAdvancedButton
                     }
                     .padding(.bottom, 16)
                 }
@@ -92,7 +100,8 @@ struct ContentView: View {
                         .padding(.horizontal)
                         .padding(.top, 6)
 
-                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: true)
+                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: true,
+                                     onShowAdvanced: { isShowingAdvanced = true })
                         .padding(.horizontal)
                         .padding(.vertical, 10)
                 }
@@ -124,6 +133,7 @@ struct ContentView: View {
                     HStack(spacing: 16) {
                         pauseButton
                         recordButton
+                        floatingAdvancedButton
                     }
                     .padding(.bottom, 8)
                 }
@@ -138,7 +148,8 @@ struct ContentView: View {
                     .padding(.horizontal)
                     .padding(.top, 6)
 
-                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false)
+                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false,
+                                     onShowAdvanced: { isShowingAdvanced = true })
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
                 }
@@ -168,6 +179,25 @@ struct ContentView: View {
                 .symbolEffect(.pulse, isActive: viewModel.isRecording)
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Advanced Button
+
+    /// Floating Advanced button shown next to Pause/Record while running, once the
+    /// user has opted in. Lets display options be changed without pausing.
+    @ViewBuilder
+    private var floatingAdvancedButton: some View {
+        if isAdvancedEnabled {
+            Button {
+                isShowingAdvanced = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.title2)
+                    .foregroundStyle(.purple)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Advanced")
+        }
     }
 
     // MARK: - Pause Button
