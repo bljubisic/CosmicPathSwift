@@ -71,10 +71,19 @@ class SimulationViewModel {
     /// True while a ReplayKit screen recording is in progress.
     var isRecording: Bool = false
 
-    /// Set to `true` by `stopRecording()` once the recorded video file is ready.
-    /// Observed by `ContentView`, which calls `consumePendingRecording()` to retrieve
-    /// the URL and present a share/save sheet, then resets this flag.
-    var hasPendingRecording: Bool = false
+    /// The finished recording awaiting share/save, set by `stopRecording()`.
+    ///
+    /// `ContentView` binds its share sheet to this via `.sheet(item:)`: the sheet
+    /// appears when it becomes non-nil, and SwiftUI sets it back to nil on dismiss.
+    /// The view model owns the temp file — whenever this value is cleared or
+    /// replaced, the previous recording's file is deleted.
+    var pendingRecording: RecordingItem? {
+        didSet {
+            if let old = oldValue, old != pendingRecording {
+                try? FileManager.default.removeItem(at: old.url)
+            }
+        }
+    }
 
     /// Current coordinate scale factor (simulation units → canvas pixels).
     /// Used by the view to scale body radii proportionally with zoom.
@@ -169,11 +178,6 @@ class SimulationViewModel {
     /// to distinguish first appearance (needs full init) from re-appearance after
     /// a portrait layout switch (only needs a canvas resize, not engine recreation).
     var isSetup: Bool { engine != nil }
-
-    /// File URL of the recorded video produced by `stopRecording()`.
-    /// Consumed by `ContentView` via `consumePendingRecording()` for the share/save sheet.
-    /// The caller is responsible for deleting this file after use.
-    private var pendingRecordingURL: URL?
 
     private let engineFactory: @Sendable ([CelestialBody]) -> SimulationEngineProtocol
     private var engine: SimulationEngineProtocol?
@@ -273,12 +277,8 @@ class SimulationViewModel {
             RPScreenRecorder.shared().stopRecording { _, _ in }
             isRecording = false
         }
-        // Clean up any unconsumed temp file from a previous recording.
-        if let url = pendingRecordingURL {
-            try? FileManager.default.removeItem(at: url)
-            pendingRecordingURL = nil
-            hasPendingRecording = false
-        }
+        // Clearing deletes any unshared temp file (see `pendingRecording.didSet`).
+        pendingRecording = nil
         pause()
 
         var defaults = SimulationConfig()
@@ -408,9 +408,8 @@ class SimulationViewModel {
 
     /// Stops the current screen recording and writes the clip to a temporary `.mp4` file.
     ///
-    /// On success, sets `hasPendingRecording = true`. The caller observes this flag
-    /// and calls `consumePendingRecording()` to retrieve the URL for the share/save sheet.
-    /// The caller is responsible for deleting the temp file after use.
+    /// On success, sets `pendingRecording`, which presents the share/save sheet.
+    /// The temp file is deleted once `pendingRecording` is cleared.
     /// Has no effect if no recording is in progress.
     func stopRecording() {
         guard isRecording else { return }
@@ -423,23 +422,10 @@ class SimulationViewModel {
             Task { @MainActor [weak self] in
                 self?.isRecording = false
                 if error == nil {
-                    self?.pendingRecordingURL = tempURL
-                    self?.hasPendingRecording = true
+                    self?.pendingRecording = RecordingItem(url: tempURL)
                 }
             }
         }
-    }
-
-    /// Returns the pending recording URL and clears the pending state.
-    ///
-    /// Call this immediately after observing `hasPendingRecording == true` to
-    /// consume the URL exactly once. The caller owns the file and must delete it
-    /// after the share/save sheet is dismissed.
-    func consumePendingRecording() -> URL? {
-        let url = pendingRecordingURL
-        pendingRecordingURL = nil
-        hasPendingRecording = false
-        return url
     }
 
     // MARK: - Simulation Loop

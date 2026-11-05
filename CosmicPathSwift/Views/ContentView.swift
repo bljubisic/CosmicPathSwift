@@ -25,10 +25,6 @@ struct ContentView: View {
     @State private var viewModel = SimulationViewModel()
     /// Tracks the current canvas size for passing to the ViewModel on setup/reset.
     @State private var canvasSize: CGSize = .zero
-    /// File URL of the most recently completed recording, held until the sheet is dismissed.
-    @State private var pendingRecordingURL: URL?
-    /// Controls presentation of the share sheet once a recording is ready.
-    @State private var showShareSheet = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -43,24 +39,11 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        // When stopRecording() writes the clip, consume the URL and show the share sheet.
-        .onChange(of: viewModel.hasPendingRecording) { _, hasRecording in
-            if hasRecording, let url = viewModel.consumePendingRecording() {
-                pendingRecordingURL = url
-                showShareSheet = true
-            }
-        }
         // Share sheet: includes Save Video, AirDrop, Messages, Mail, and all installed apps.
-        // The temp file is deleted once the sheet is dismissed regardless of outcome.
-        .sheet(isPresented: $showShareSheet, onDismiss: {
-            if let url = pendingRecordingURL {
-                try? FileManager.default.removeItem(at: url)
-                pendingRecordingURL = nil
-            }
-        }) {
-            if let url = pendingRecordingURL {
-                VideoShareSheet(url: url)
-            }
+        // Shown when stopRecording() sets pendingRecording; dismissing clears it, and
+        // the view model deletes the temp file regardless of outcome.
+        .sheet(item: $viewModel.pendingRecording) { recording in
+            VideoShareSheet(url: recording.url)
         }
     }
 
@@ -170,7 +153,7 @@ struct ContentView: View {
     /// Floating record/stop button shown alongside the pause button while the simulation runs.
     ///
     /// Tapping starts or stops a ReplayKit screen recording. A pulsing red icon indicates
-    /// an active recording. When stopped, `hasPendingPreview` triggers the save/share sheet.
+    /// an active recording. When stopped, `pendingRecording` triggers the save/share sheet.
     private var recordButton: some View {
         Button {
             if viewModel.isRecording {

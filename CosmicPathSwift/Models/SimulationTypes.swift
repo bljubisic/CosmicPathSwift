@@ -564,3 +564,15 @@ struct SimulationConfig: Equatable {
         return String(format: "%.1fe%d", mantissa, exponent)
     }
 }
+
+// MARK: - RecordingItem
+
+/// A finished screen recording waiting to be shared or saved.
+///
+/// `Identifiable` so it can drive `.sheet(item:)` directly: the share sheet is
+/// shown while a value is present and dismissed by setting it back to nil.
+struct RecordingItem: Identifiable, Equatable, Sendable {
+    /// Temporary `.mp4` file written by ReplayKit.
+    let url: URL
+    var id: URL { url }
+}
