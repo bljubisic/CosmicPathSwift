@@ -595,6 +595,34 @@ struct AdvancedSettings: Equatable, Codable, Sendable {
 
     /// Rendering-only options. They take effect immediately, even while running.
     var display = DisplaySettings()
+
+    /// Time-step and speed multipliers. Applied immediately, even while running,
+    /// because they never change the initial conditions.
+    var time = TimeSettings()
+}
+
+/// Time and integration options from the Advanced sheet.
+///
+/// Both are multipliers on the current scenario's own `timeStep` and
+/// `stepsPerFrame`, so the defaults (1, 1) reproduce the standard pacing exactly.
+struct TimeSettings: Equatable, Codable, Sendable {
+    /// Integration step size relative to the scenario's own (accuracy).
+    /// Smaller values are more accurate; the step count rises to keep on-screen speed.
+    var timeStepMultiplier: Double = 1
+
+    /// How fast simulated time runs relative to normal.
+    /// Achieved with more steps per frame, never larger steps, so accuracy is unchanged.
+    var timeSpeed: Double = 1
+
+    /// Values offered by the Accuracy picker.
+    static let timeStepChoices: [Double] = [0.25, 0.5, 1, 2]
+
+    /// Values offered by the Speed picker.
+    static let timeSpeedChoices: [Double] = [0.25, 0.5, 1, 2, 4, 8]
+
+    /// Upper bound on integration steps per frame, so the frame budget holds at
+    /// fine accuracy and high speed. Starting value — to be measured on device.
+    static let maxStepsPerFrame = 1000
 }
 
 /// Rendering-only options from the Advanced sheet. None of these affect the physics.

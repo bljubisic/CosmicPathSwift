@@ -28,6 +28,8 @@ class MockSimulationEngine: SimulationEngineProtocol {
     var isBlackHoleMode: Bool = false
     var bleedParticles: [BleedParticle] = []
     var stepCount = 0
+    /// Time step passed to the most recent `step(dt:)` call.
+    var lastDt: Double?
 
     init(bodies: [CelestialBody]) {
         self.bodies = bodies
@@ -35,6 +37,7 @@ class MockSimulationEngine: SimulationEngineProtocol {
 
     func step(dt: Double) {
         stepCount += 1
+        lastDt = dt
         // Move the last body slightly each step to simulate motion
         let last = bodies.count - 1
         bodies[last].position = bodies[last].position + Vector3D(x: dt, y: 0, z: 0)

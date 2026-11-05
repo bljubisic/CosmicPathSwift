@@ -13,6 +13,15 @@ import Foundation
 
 extension GravitySimulationEngine {
 
+    // MARK: - Tuning Constants
+
+    /// Simulated time between 2-body trail points. Equals the default `dt`, so
+    /// standard settings record exactly one point per step, as before.
+    static let twoBodyTrailSampleInterval: Double = 0.02
+
+    /// Simulated time between bleed particles (4 default steps, ~60 ms on screen at 1×).
+    static let bleedEmissionInterval: Double = 0.08
+
     // MARK: - State
 
     /// Bookkeeping used only by the 2-body scenario.
@@ -20,9 +29,10 @@ extension GravitySimulationEngine {
         /// Initial mass of body2, used to compute the minimum bleed-out threshold
         /// and to track how much mass has been lost to tidal stripping.
         var body2InitialMass: Double = 0
-        /// Counts steps since the last bleed particle was emitted, so we throttle
-        /// emission to one particle every 4 steps (~60 ms at 4 steps/frame, 60 fps).
-        var bleedStepCounter: Int = 0
+        /// Schedules trail points by simulated time, so trails look the same at any `dt`.
+        var trailSampler = TrailSampler(interval: GravitySimulationEngine.twoBodyTrailSampleInterval)
+        /// Throttles bleed emission by simulated time (only advanced inside the Roche limit).
+        var bleedSampler = TrailSampler(interval: GravitySimulationEngine.bleedEmissionInterval)
 
         // Perihelion precession tracking.
         //
@@ -59,6 +69,7 @@ extension GravitySimulationEngine {
 
         guard !metrics.isAbsorbed else { return }
 
+        let previousPositions = bodies.map(\.position)
         integrate(dt: dt)
 
         // Separation uses the full 3D distance so inclined orbits are handled correctly.
@@ -69,20 +80,37 @@ extension GravitySimulationEngine {
         if applyTidalStripping(separation: sep, dt: dt) { return }
 
         accumulateProperTime(schwarzschildRadius: rs, separation: sep, dt: dt)
-        appendTrailPoints()
+        let fractions = twoBodyState.trailSampler.sampleFractions(forStep: dt)
+        appendTrailPoints(from: previousPositions, atFractions: fractions)
         trackPrecession()
         updateMetrics()
     }
 
-    /// Records the current position of every body in its trail, capped at
-    /// `CelestialBody.maxTrailLength`.
-    func appendTrailPoints() {
+    /// Records one trail point per fraction for every body, linearly interpolated
+    /// between its position at the start of the step and now (fraction 1 = now).
+    /// Trails are capped at `CelestialBody.maxTrailLength`.
+    ///
+    /// If the body count changed during the step (a merge), the start positions no
+    /// longer line up, so the current positions are recorded instead.
+    func appendTrailPoints(from previousPositions: [Vector3D], atFractions fractions: [Double]) {
+        guard !fractions.isEmpty else { return }
+        let canInterpolate = previousPositions.count == bodies.count
         for i in bodies.indices {
-            bodies[i].trail.append(bodies[i].position)
-            if bodies[i].trail.count > CelestialBody.maxTrailLength {
-                bodies[i].trail.removeFirst()
+            let current = bodies[i].position
+            let points = fractions.map { fraction in
+                canInterpolate ? Self.interpolate(previousPositions[i], current, fraction) : current
+            }
+            bodies[i].trail.append(contentsOf: points)
+            let overflow = bodies[i].trail.count - CelestialBody.maxTrailLength
+            if overflow > 0 {
+                bodies[i].trail.removeFirst(overflow)
             }
         }
+    }
+
+    /// Linear interpolation that returns `end` exactly at fraction 1.
+    private static func interpolate(_ start: Vector3D, _ end: Vector3D, _ fraction: Double) -> Vector3D {
+        fraction >= 1 ? end : start + (end - start) * fraction
     }
 
     // MARK: - Absorption
@@ -143,7 +171,7 @@ extension GravitySimulationEngine {
         let massLossRate = bodies[1].mass * 0.08 * tideFraction
         bodies[1].mass = max(bodies[1].mass - massLossRate * dt, initialMass * 0.005)
 
-        emitBleedParticleIfDue()
+        emitBleedParticlesIfDue(dt: dt)
 
         // Planet fully disrupted — trigger destruction.
         if bodies[1].mass <= initialMass * 0.005 {
@@ -153,12 +181,17 @@ extension GravitySimulationEngine {
         return false
     }
 
-    /// Emits one bleed particle every 4 steps to keep the count bounded.
-    private func emitBleedParticleIfDue() {
-        twoBodyState.bleedStepCounter += 1
-        guard twoBodyState.bleedStepCounter >= 4 else { return }
-        twoBodyState.bleedStepCounter = 0
+    /// Emits one bleed particle per `bleedEmissionInterval` of simulated time
+    /// spent inside the Roche limit, so the density doesn't depend on `dt`.
+    private func emitBleedParticlesIfDue(dt: Double) {
+        let due = twoBodyState.bleedSampler.sampleFractions(forStep: dt).count
+        for _ in 0..<due {
+            emitBleedParticle()
+        }
+    }
 
+    /// Emits one bleed particle at the planet, capping the total at 300.
+    private func emitBleedParticle() {
         // Initial velocity: planet's velocity scaled down so the particle
         // is sub-circular and spirals inward, plus a small inward nudge.
         let planet = bodies[1]

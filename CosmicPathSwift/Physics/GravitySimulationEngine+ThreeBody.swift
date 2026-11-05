@@ -33,7 +33,11 @@ extension GravitySimulationEngine {
     /// Trail points recorded per dynamical time √(R³/GM) of the initial system.
     /// Sampling by simulated time (not per step) keeps trails comparable across
     /// presets whose time steps differ by more than an order of magnitude.
-    static let trailSamplesPerDynamicalTime: Double = 100
+    ///
+    /// Was 100 when the sampler reset to zero after each sample, which made the
+    /// real spacing ⌈interval/dt⌉·dt — about twice the nominal interval. Now that
+    /// leftover time carries over, 50 keeps the trails looking as they did.
+    static let trailSamplesPerDynamicalTime: Double = 50
 
     // MARK: - State
 
@@ -45,8 +49,8 @@ extension GravitySimulationEngine {
         let initialExtent: Double
         /// Simulated time between trail samples.
         let trailSampleInterval: Double
-        /// Simulated time since the last trail sample.
-        var timeSinceTrailSample: Double = 0
+        /// Schedules trail points every `trailSampleInterval` of simulated time.
+        var trailSampler: TrailSampler
         /// Sum of the Newtonian energy changes caused by inelastic merges, so they
         /// can be excluded from the drift metric.
         var mergeEnergyChange: Double = 0
@@ -64,6 +68,7 @@ extension GravitySimulationEngine {
             } else {
                 trailSampleInterval = 0
             }
+            trailSampler = TrailSampler(interval: trailSampleInterval)
         }
     }
 
@@ -72,10 +77,11 @@ extension GravitySimulationEngine {
     /// One N-body step: integrate, merge colliding bodies, sample trails,
     /// detect ejection, and refresh `systemMetrics`.
     func stepNBody(dt: Double) {
+        let previousPositions = bodies.map(\.position)
         integrate(dt: dt)
         systemMetrics.elapsedTime += dt
         resolveCollision()
-        recordTrailsIfDue(dt: dt)
+        recordTrailsIfDue(from: previousPositions, dt: dt)
         detectEjection()
         updateSystemMetrics()
     }
@@ -126,12 +132,11 @@ extension GravitySimulationEngine {
 
     // MARK: - Trails
 
-    /// Appends trail points once per `trailSampleInterval` of simulated time.
-    private func recordTrailsIfDue(dt: Double) {
-        nBodyState.timeSinceTrailSample += dt
-        guard nBodyState.timeSinceTrailSample >= nBodyState.trailSampleInterval else { return }
-        nBodyState.timeSinceTrailSample = 0
-        appendTrailPoints()
+    /// Appends trail points once per `trailSampleInterval` of simulated time,
+    /// interpolated within the step when the interval doesn't divide `dt` evenly.
+    private func recordTrailsIfDue(from previousPositions: [Vector3D], dt: Double) {
+        let fractions = nBodyState.trailSampler.sampleFractions(forStep: dt)
+        appendTrailPoints(from: previousPositions, atFractions: fractions)
     }
 
     // MARK: - Ejection

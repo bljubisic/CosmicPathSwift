@@ -11,8 +11,8 @@ import SwiftUI
 
 /// Advanced options, grouped by topic, each with a short explanation.
 ///
-/// Edits go straight into `viewModel.config.advanced`. Display options take
-/// effect immediately, even while the simulation is running. The settings are
+/// Edits go straight into `viewModel.config.advanced`. Time and display options
+/// take effect immediately, even while the simulation is running. The settings are
 /// kept across Reset; "Restore defaults" returns them to `AdvancedSettings()`.
 struct AdvancedControlsView: View {
     @Bindable var viewModel: SimulationViewModel
@@ -21,6 +21,7 @@ struct AdvancedControlsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                timeSection
                 displaySection
                 restoreSection
             }
@@ -35,6 +36,60 @@ struct AdvancedControlsView: View {
         // Medium detent leaves the canvas visible, so display changes can be seen as they're made.
         .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Time & Integration
+
+    private var timeSection: some View {
+        Section {
+            accuracyPicker
+            speedPicker
+            stepButton
+        } header: {
+            Text("Time & Integration")
+        } footer: {
+            Text("These apply immediately, even while running.")
+        }
+    }
+
+    private var accuracyPicker: some View {
+        captionedRow(
+            "Accuracy",
+            caption: "Size of each integration step relative to this scenario's own. Smaller is more accurate and uses more CPU; on-screen speed stays the same."
+        ) {
+            Picker("Accuracy", selection: $viewModel.config.advanced.time.timeStepMultiplier) {
+                ForEach(TimeSettings.timeStepChoices, id: \.self) { value in
+                    Text("×\(Self.fractionLabel(value))").tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var speedPicker: some View {
+        captionedRow(
+            "Speed",
+            caption: "How fast simulated time runs. Uses more steps per frame rather than larger steps, so accuracy is unchanged."
+        ) {
+            Picker("Speed", selection: $viewModel.config.advanced.time.timeSpeed) {
+                ForEach(TimeSettings.timeSpeedChoices, id: \.self) { value in
+                    Text("\(Self.fractionLabel(value))×").tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+            if viewModel.isSpeedLimited {
+                Text("Limited by CPU at this accuracy")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var stepButton: some View {
+        captionedRow("Step", caption: "Advance one frame while paused.") {
+            Button("Step One Frame") { viewModel.stepFrame() }
+                .disabled(viewModel.isRunning)
+        }
     }
 
     // MARK: - Display
@@ -77,6 +132,30 @@ struct AdvancedControlsView: View {
     }
 
     // MARK: - Helpers
+
+    /// A titled row with a caption, followed by its control.
+    private func captionedRow<Content: View>(
+        _ title: String,
+        caption: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    /// "¼", "½" or a whole number, for the multiplier pickers.
+    private static func fractionLabel(_ value: Double) -> String {
+        switch value {
+        case 0.25: return "¼"
+        case 0.5: return "½"
+        default: return String(format: "%g", value)
+        }
+    }
 
     /// A toggle with a one-line title and a caption explaining what it does.
     private func explainedToggle(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {

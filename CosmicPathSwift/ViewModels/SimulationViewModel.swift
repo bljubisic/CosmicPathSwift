@@ -68,6 +68,16 @@ class SimulationViewModel {
     var systemMetrics = SystemMetrics()
     var config = SimulationConfig()
 
+    /// True when the chosen accuracy and speed need more steps per frame than
+    /// `TimeSettings.maxStepsPerFrame`, so the simulation runs slower than asked.
+    private(set) var isSpeedLimited: Bool = false
+
+    /// Integration step actually used: the scenario's `timeStep` scaled by the
+    /// Accuracy multiplier from the Advanced sheet.
+    var effectiveTimeStep: Double {
+        config.timeStep * config.advanced.time.timeStepMultiplier
+    }
+
     /// True while a ReplayKit screen recording is in progress.
     var isRecording: Bool = false
 
@@ -185,6 +195,9 @@ class SimulationViewModel {
     private var transformer = CoordinateTransformer(canvasSize: .zero)
     private var currentCanvasSize: CGSize = .zero
 
+    /// Turns the speed and accuracy multipliers into whole steps per frame.
+    private var stepPlanner = FrameStepPlanner()
+
     /// Tracks the maximum distance any body reaches from the centre of mass, used to
     /// dynamically zoom out so the entire system always fits on screen.
     private var maxExtent: Double = 0
@@ -244,6 +257,8 @@ class SimulationViewModel {
 
         engine = engineFactory(bodies)
         engine?.isBlackHoleMode = config.mode == .twoBody && config.isBlackHoleMode
+        stepPlanner.reset()
+        updateSpeedLimited()
         syncState()
     }
 
@@ -309,8 +324,17 @@ class SimulationViewModel {
         setup(canvasSize: canvasSize)
     }
 
+    /// Advances one frame while paused ("Step One Frame" in the Advanced sheet).
+    /// Does nothing while running. Always runs at least one step, so it still
+    /// moves at speeds where a frame would otherwise contain no step.
+    func stepFrame() {
+        guard !isRunning, engine != nil else { return }
+        advance(steps: max(planSteps(), 1))
+        syncState()
+    }
+
     /// Returns every Advanced setting to its default ("Restore defaults" in the sheet).
-    /// Only display settings exist so far, so nothing needs to be re-simulated.
+    /// None of them change the initial conditions, so nothing needs to be re-simulated.
     func restoreAdvancedDefaults() {
         config.advanced = AdvancedSettings()
     }
@@ -439,12 +463,35 @@ class SimulationViewModel {
 
     // MARK: - Simulation Loop
 
-    private func tick() {
-        guard let engine else { return }
-        for _ in 0..<config.stepsPerFrame {
-            engine.step(dt: config.timeStep)
-        }
+    /// One rendered frame: runs the planned number of steps, then syncs state.
+    /// Internal (not private) so tests can drive frames without the timer.
+    func tick() {
+        guard engine != nil else { return }
+        advance(steps: planSteps())
         syncState()
+    }
+
+    /// Steps for the next frame. The multipliers are read every frame, so
+    /// changes in the Advanced sheet apply immediately, even while running.
+    private func planSteps() -> Int {
+        let steps = stepPlanner.steps(baseSteps: config.stepsPerFrame, time: config.advanced.time)
+        updateSpeedLimited()
+        return steps
+    }
+
+    private func advance(steps: Int) {
+        guard let engine else { return }
+        let dt = effectiveTimeStep
+        for _ in 0..<steps {
+            engine.step(dt: dt)
+        }
+    }
+
+    /// Copies the planner's flag, writing only on change to avoid needless view updates.
+    private func updateSpeedLimited() {
+        if isSpeedLimited != stepPlanner.isSpeedLimited {
+            isSpeedLimited = stepPlanner.isSpeedLimited
+        }
     }
 
     /// Syncs positions, trails, and metrics from the engine to observable state.
