@@ -66,7 +66,15 @@ class SimulationViewModel {
     var isRunning: Bool = false
     var metrics = RelativisticMetrics()
     var systemMetrics = SystemMetrics()
-    var config = SimulationConfig()
+    var config = SimulationConfig() {
+        didSet {
+            // Display options only change projection, so re-project at once;
+            // this makes them work while paused as well as while running.
+            if config.advanced.display != oldValue.advanced.display {
+                syncState()
+            }
+        }
+    }
 
     /// True when the chosen accuracy and speed need more steps per frame than
     /// `TimeSettings.maxStepsPerFrame`, so the simulation runs slower than asked.
@@ -102,6 +110,13 @@ class SimulationViewModel {
     /// Canvas-space positions and opacities of active bleed particles.
     /// Projected from 3D each frame in `syncState()` for rendering in `SimulationCanvasView`.
     var bleedParticleData: [(position: CGPoint, opacity: Double)] = []
+
+    /// Canvas-space velocity arrow per body (index-aligned with `bodyPositions`).
+    /// Empty unless enabled in the Advanced sheet.
+    var velocityArrows: [CanvasArrow] = []
+
+    /// Canvas-space acceleration arrow per body. Empty unless enabled.
+    var accelerationArrows: [CanvasArrow] = []
 
     // MARK: - Habitable Zone State
 
@@ -208,6 +223,12 @@ class SimulationViewModel {
     /// Reference mass for `bodyMassMultipliers` in 3-body mode (the preset's mass unit).
     private var massUnit: Double = 1
 
+    /// Dynamical time √(R³/GM) of the initial system; scales the vector arrows.
+    private var vectorDynamicalTime: Double = 0
+
+    /// Longest arrow allowed, in simulation units (the initial view extent).
+    private var vectorMaxLength: Double = 0
+
     /// Instantaneous centre of mass in simulation space, updated every frame.
     /// Used as the `centerOffset` for the coordinate transformer so the view
     /// stays centred on the system even when numerical integration causes the
@@ -254,6 +275,10 @@ class SimulationViewModel {
         minimumExtent = initialExtent * CelestialConstants.orbitMarginFactor
         maxExtent = minimumExtent
         transformer = makeTransformer()
+        vectorDynamicalTime = VectorOverlay.dynamicalTime(
+            extent: initialExtent, totalMass: NBodyGravity.totalMass(bodies)
+        )
+        vectorMaxLength = minimumExtent
 
         engine = engineFactory(bodies)
         engine?.isBlackHoleMode = config.mode == .twoBody && config.isBlackHoleMode
@@ -307,8 +332,8 @@ class SimulationViewModel {
 
         // Reset camera to the default 30° elevation view so the orbit is
         // always recognisable after reset.
-        cameraAzimuth = 0.0
-        cameraElevation = .pi / 6
+        cameraAzimuth = CameraPreset.tilted.azimuth
+        cameraElevation = CameraPreset.tilted.elevation
         setup(canvasSize: canvasSize)
     }
 
@@ -383,8 +408,13 @@ class SimulationViewModel {
     /// Called when the user taps "Reset Camera". Restores the view angle that
     /// gives a natural 3D perspective on a flat orbit without losing any simulation state.
     func resetCamera() {
-        cameraAzimuth = 0.0
-        cameraElevation = .pi / 6
+        applyCameraPreset(.tilted)
+    }
+
+    /// Turns the camera to a fixed orientation (Advanced sheet) without touching the simulation.
+    func applyCameraPreset(_ preset: CameraPreset) {
+        cameraAzimuth = preset.azimuth
+        cameraElevation = preset.elevation
         transformer = makeTransformer()
         syncState()
     }
@@ -507,11 +537,29 @@ class SimulationViewModel {
             (position: transformer.simulationToCanvas(particle.position), opacity: particle.life)
         }
 
+        updateVectorArrows(bodies)
+
         metrics = engine.metrics
         systemMetrics = engine.systemMetrics
         coordinateScale = transformer.scale
 
         updateHabitableZone(bodies)
+    }
+
+    // MARK: - Vectors
+
+    /// Projects velocity / acceleration arrows for the enabled kinds.
+    private func updateVectorArrows(_ bodies: [CelestialBody]) {
+        let display = config.advanced.display
+        velocityArrows = display.showVelocityVectors ? arrows(.velocity, for: bodies) : []
+        accelerationArrows = display.showAccelerationVectors ? arrows(.acceleration, for: bodies) : []
+    }
+
+    private func arrows(_ kind: VectorOverlay.Kind, for bodies: [CelestialBody]) -> [CanvasArrow] {
+        VectorOverlay.arrows(
+            for: bodies, kind: kind, dynamicalTime: vectorDynamicalTime,
+            maxLength: vectorMaxLength, transformer: transformer
+        )
     }
 
     // MARK: - Habitable Zone
@@ -574,6 +622,9 @@ class SimulationViewModel {
     /// (neither for the CoM nor the extent), so the camera stays on the remaining
     /// bound system instead of zooming out forever. The transformer is only rebuilt
     /// when the extent or CoM actually changes.
+    ///
+    /// With Lock Zoom on (Advanced sheet) the extent is left as it is, so the scale
+    /// stays fixed; the view still follows the CoM.
     private func updateZoom(for bodies: [CelestialBody]) {
         let ejectedID = engine?.systemMetrics.ejectedBodyID
         let tracked = bodies.filter { $0.id != ejectedID || bodies.count == 1 }
@@ -588,7 +639,9 @@ class SimulationViewModel {
         let targetExtent = max(currentMax * 1.15, minimumExtent)
         let previousExtent = maxExtent
 
-        if targetExtent > maxExtent {
+        if config.advanced.display.lockZoom {
+            // Keep the current extent.
+        } else if targetExtent > maxExtent {
             // Zoom out immediately so bodies are never clipped off-screen.
             maxExtent = targetExtent
         } else {
@@ -611,7 +664,9 @@ class SimulationViewModel {
     /// Projects every body's position and trail to canvas space and depth-sorts them.
     private func projectBodies(_ bodies: [CelestialBody]) {
         bodyPositions = bodies.map { transformer.simulationToCanvas($0.position) }
-        bodyTrails = bodies.map { transformer.transformTrail($0.trail) }
+        // The engine keeps a longer buffer; project only the points the user asked for.
+        let trailLimit = config.advanced.display.trailPointLimit
+        bodyTrails = bodies.map { transformer.transformTrail(Array($0.trail.suffix(trailLimit))) }
         bodyKinds = bodies.map(\.kind)
         bodyIDs = bodies.map(\.id)
         bodyMasses = bodies.map(\.mass)

@@ -123,11 +123,13 @@ struct CelestialBody {
     var acceleration: Vector3D = .zero
 
     /// Simulation-space positions from recent frames, newest at the end.
-    /// Capped at `maxTrailLength` to bound memory usage.
+    /// Capped at `trailBufferLength` to bound memory usage.
     var trail: [Vector3D] = []
 
-    /// Maximum number of trail positions to retain.
-    static let maxTrailLength = 800
+    /// Maximum number of trail positions the engine retains: enough for the
+    /// longest Trail Length choice (4 × 800). The ViewModel shows only the most
+    /// recent `DisplaySettings.trailPointLimit` of them.
+    static let trailBufferLength = 3200
 }
 
 // MARK: - BleedParticle
@@ -636,4 +638,35 @@ struct DisplaySettings: Equatable, Codable, Sendable {
     /// Draw the Schwarzschild-radius rings, plus the photon sphere and ISCO
     /// rings in black hole mode.
     var showRelativisticRadii: Bool = true
+
+    /// Trail length relative to the standard 800 points; 0 hides trails.
+    /// Points are sampled by simulated time, so this is a fixed time span.
+    var trailLengthMultiplier: Double = 1
+
+    /// Multiplier on how strongly the spacetime grid is pulled toward the bodies.
+    var gridWarpStrength: Double = 1
+
+    /// Draw each body's velocity as an arrow.
+    var showVelocityVectors: Bool = false
+
+    /// Draw each body's gravitational acceleration as an arrow.
+    var showAccelerationVectors: Bool = false
+
+    /// Freeze the automatic zoom at its current scale (the view still follows the CoM).
+    var lockZoom: Bool = false
+
+    /// Trail points shown at multiplier 1 (the length before PR 3).
+    static let baseTrailPoints = 800
+
+    /// Values offered by the Trail Length picker (0 = off).
+    static let trailLengthChoices: [Double] = [0, 0.25, 0.5, 1, 2, 4]
+
+    /// Range of the grid warp slider.
+    static let gridWarpRange: ClosedRange<Double> = 0...3
+
+    /// Number of most-recent trail points to draw per body.
+    var trailPointLimit: Int {
+        let points = (Double(Self.baseTrailPoints) * max(trailLengthMultiplier, 0)).rounded()
+        return min(Int(points), CelestialBody.trailBufferLength)
+    }
 }

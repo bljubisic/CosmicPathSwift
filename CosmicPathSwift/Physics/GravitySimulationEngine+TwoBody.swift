@@ -88,7 +88,7 @@ extension GravitySimulationEngine {
 
     /// Records one trail point per fraction for every body, linearly interpolated
     /// between its position at the start of the step and now (fraction 1 = now).
-    /// Trails are capped at `CelestialBody.maxTrailLength`.
+    /// Trails are capped at `CelestialBody.trailBufferLength`.
     ///
     /// If the body count changed during the step (a merge), the start positions no
     /// longer line up, so the current positions are recorded instead.
@@ -101,7 +101,7 @@ extension GravitySimulationEngine {
                 canInterpolate ? Self.interpolate(previousPositions[i], current, fraction) : current
             }
             bodies[i].trail.append(contentsOf: points)
-            let overflow = bodies[i].trail.count - CelestialBody.maxTrailLength
+            let overflow = bodies[i].trail.count - CelestialBody.trailBufferLength
             if overflow > 0 {
                 bodies[i].trail.removeFirst(overflow)
             }
