@@ -292,7 +292,7 @@ struct ThreeBodyViewModelTests {
     private let canvas = CGSize(width: 400, height: 300)
 
     private func makeViewModel(onCreate: @escaping @Sendable (Int) -> Void = { _ in }) -> SimulationViewModel {
-        SimulationViewModel { bodies in
+        SimulationViewModel { bodies, _ in
             onCreate(bodies.count)
             return MockSimulationEngine(bodies: bodies)
         }

@@ -124,7 +124,7 @@ extension GravitySimulationEngine {
             return true
         }
 
-        if !isBlackHoleMode && sep <= Self.starSurfaceRadius(schwarzschildRadius: rs) {
+        if !isBlackHoleMode && sep <= Self.starSurfaceRadius(schwarzschildRadius: rs, softening: softeningLength) {
             // Normal mode: the planet reached the star's surface.
             absorbPlanet()
             return true
@@ -135,7 +135,10 @@ extension GravitySimulationEngine {
     /// Radius at which the planet hits the star in normal mode: max(2 rₛ, 2 × softening).
     /// It scales with stellar mass while never falling below the softening length.
     /// For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
-    static func starSurfaceRadius(schwarzschildRadius rs: Double) -> Double {
+    static func starSurfaceRadius(
+        schwarzschildRadius rs: Double,
+        softening: Double = GravitySimulationEngine.softening
+    ) -> Double {
         max(2.0 * rs, softening * 2)
     }
 
@@ -221,7 +224,7 @@ extension GravitySimulationEngine {
         let bleedGM = Self.G * bodies[0].mass
         for i in bleedParticles.indices.reversed() {
             let toBody1 = center - bleedParticles[i].position
-            let d = max(toBody1.magnitude, Self.softening)
+            let d = max(toBody1.magnitude, softeningLength)
             // a = GM/d² × r̂  (toward body1)
             let acc = (bleedGM / (d * d * d)) * toBody1
             bleedParticles[i].velocity = bleedParticles[i].velocity + acc * dt
@@ -237,7 +240,7 @@ extension GravitySimulationEngine {
 
     /// Accumulates proper time from the Schwarzschild metric: dτ/dt = √((1 − rₛ/r) − v²/c²).
     private func accumulateProperTime(schwarzschildRadius rs: Double, separation sep: Double, dt: Double) {
-        let rsOverR = min(rs / max(sep, Self.softening), 0.99)
+        let rsOverR = min(rs / max(sep, softeningLength), 0.99)
         let v2OverC2 = min(bodies[1].velocity.magnitudeSquared / Self.cSquared, 0.99)
         let metricFactor = max(1.0 - rsOverR - v2OverC2, 0.001)
         twoBodyState.accumulatedProperTime += dt * sqrt(metricFactor)
@@ -294,7 +297,7 @@ extension GravitySimulationEngine {
         metrics.isBlackHole = isBlackHoleMode && rs >= Self.blackHoleThreshold
 
         // dτ/dt = √(1 - rₛ/r) for a stationary observer at radius r
-        let ratio = min(rs / max(r, Self.softening), 0.99)
+        let ratio = min(rs / max(r, softeningLength), 0.99)
         metrics.timeDilationFactor = sqrt(1.0 - ratio)
 
         metrics.velocityFractionOfC = v2Speed / Self.c

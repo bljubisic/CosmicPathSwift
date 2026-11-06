@@ -605,6 +605,10 @@ struct AdvancedSettings: Equatable, Codable, Sendable {
     /// Starting conditions (orbit shape, chaos nudge, Custom layout). Changing
     /// these restarts the setup, so they are edited while paused.
     var initial = InitialConditionSettings()
+
+    /// Integrator, softening, and collision mode. Changing these restarts the
+    /// setup with a new engine, so they are edited while paused.
+    var engine = EngineSettings()
 }
 
 /// Time and integration options from the Advanced sheet.

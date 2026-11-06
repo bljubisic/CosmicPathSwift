@@ -99,7 +99,7 @@ struct HabitableZoneRingTests {
 struct HabitableZoneViewModelTests {
 
     private func makeViewModel() -> SimulationViewModel {
-        SimulationViewModel { bodies in MockSimulationEngine(bodies: bodies) }
+        SimulationViewModel { bodies, _ in MockSimulationEngine(bodies: bodies) }
     }
 
     private let canvas = CGSize(width: 400, height: 300)
@@ -156,5 +156,56 @@ struct HabitableZoneViewModelTests {
         vm.setup(canvasSize: canvas)
         #expect(vm.isHabitableZoneOffScreen)
         #expect(vm.habitableStatus == .tooHot)
+    }
+}
+
+// MARK: - Projection
+
+struct HabitableZoneProjectionTests {
+    private let zone = HabitableZone(luminosity: 1)
+    private let star = CelestialBody(id: 0, kind: .star, mass: 1, position: Vector3D(x: 30, y: -20, z: 0), velocity: .zero)
+    private let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), elevation: 0)
+
+    private func planet(atAU distanceAU: Double) -> CelestialBody {
+        let offset = Vector3D(x: distanceAU * CelestialConstants.baseAU, y: 0, z: 0)
+        return CelestialBody(id: 1, kind: .planet, mass: 1, position: star.position + offset,
+                             velocity: Vector3D(x: 0, y: 1, z: 0))
+    }
+
+    /// Viewed top-down, both rings are circles of the zone radii around the star.
+    @Test func ringsLieAtZoneRadiiAroundStar() {
+        let projection = HabitableZoneProjection.project(
+            zone: zone, star: star, planet: planet(atAU: 1), transformer: transformer,
+            maxExtent: CelestialConstants.baseAU, isAbsorbed: false
+        )
+        let center = transformer.simulationToCanvas(star.position)
+        #expect(projection.innerRing.count == HabitableZoneProjection.ringSamples)
+        for (ring, radius) in [(projection.innerRing, zone.innerPx), (projection.outerRing, zone.outerPx)] {
+            for point in ring {
+                let distance = hypot(point.x - center.x, point.y - center.y)
+                #expect(abs(distance - radius * transformer.scale) < 1e-6)
+            }
+        }
+        #expect(projection.status == .habitable)
+        #expect(!projection.isOffScreen)
+    }
+
+    @Test func absorbedPlanetHasNoStatus() {
+        let projection = HabitableZoneProjection.project(
+            zone: zone, star: star, planet: planet(atAU: 1), transformer: transformer,
+            maxExtent: CelestialConstants.baseAU, isAbsorbed: true
+        )
+        #expect(projection.status == nil)
+        #expect(projection.equilibriumTemperature == nil)
+        #expect(!projection.innerRing.isEmpty)
+    }
+
+    @Test func zoneBeyondViewIsOffScreen() {
+        let projection = HabitableZoneProjection.project(
+            zone: zone, star: star, planet: planet(atAU: 0.2), transformer: transformer,
+            maxExtent: zone.innerPx / 2, isAbsorbed: false
+        )
+        #expect(projection.isOffScreen)
+        #expect(projection.status == .tooHot)
     }
 }

@@ -8,14 +8,16 @@ Open in Xcode via `CosmicPathSwift.xcodeproj`. There is no CLI build script — 
 
 ```bash
 # Build
-xcodebuild -project CosmicPathSwift.xcodeproj -scheme CosmicPathSwift -destination 'platform=iOS Simulator,name=iPhone 16'
+xcodebuild -project CosmicPathSwift.xcodeproj -scheme CosmicPathSwift -destination 'id=<SIMULATOR_UDID>'
 
 # Run all tests
-xcodebuild test -project CosmicPathSwift.xcodeproj -scheme CosmicPathSwift -destination 'platform=iOS Simulator,name=iPhone 16'
+xcodebuild test -project CosmicPathSwift.xcodeproj -scheme CosmicPathSwift -destination 'id=<SIMULATOR_UDID>'
 
 # Run a single test (Swift Testing framework, use -only-testing with the suite name)
-xcodebuild test -project CosmicPathSwift.xcodeproj -scheme CosmicPathSwift -destination 'platform=iOS Simulator,name=iPhone 16' -only-testing:CosmicPathSwiftTests/GravitySimulationEngineTests
+xcodebuild test -project CosmicPathSwift.xcodeproj -scheme CosmicPathSwift -destination 'id=<SIMULATOR_UDID>' -only-testing:CosmicPathSwiftTests/GravitySimulationEngineTests
 ```
+
+There is no iPhone 16 simulator on this machine; pick a UDID from `xcrun simctl list devices available` (e.g. the iOS 27.2 iPhone 17). Pass `-only-testing:CosmicPathSwiftTests` to skip the slow UI tests.
 
 Tests use Swift Testing (`import Testing`, `@Test`, `#expect`), not XCTest.
 
@@ -39,13 +41,13 @@ ContentView  (GeometryReader → portrait or landscape layout)
 
 ### Key design decisions
 
-**Physics engine injection** — `SimulationViewModel` takes an `engineFactory` closure at init, defaulting to `GravitySimulationEngine`. Tests pass `MockSimulationEngine` this way without any mocking framework.
+**Physics engine injection** — `SimulationViewModel` takes an `engineFactory: ([CelestialBody], EngineSettings) -> SimulationEngineProtocol` closure at init, defaulting to `GravitySimulationEngine(bodies:settings:)`. The view model passes `config.advanced.engine` (integrator, softening, collision mode) to every engine it builds, including the chaos twin; changing those settings restarts the setup. Tests pass `MockSimulationEngine` this way (`{ bodies, _ in … }`) without any mocking framework.
 
 **Coordinate spaces** — The engine works in simulation space (origin at center, units are pixels). `CoordinateTransformer` converts to canvas space (origin at top-left) before the ViewModel exposes positions to views. Don't mix these spaces.
 
 **Scaled physics constants** — `G = 500`, `c = 200` (not SI units). Mass multipliers in `SimulationConfig` map to `CelestialConstants.baseSolarMass / baseEarthMass` internal values. Black hole mode switches `body1.mass` to `blackHoleSolarMass = 5000` to make the Schwarzschild radius visually meaningful (threshold: `rs > 8px`).
 
-**Simulation loop** — A `Timer` at 60 fps calls `tick()`, which runs `stepsPerFrame = 4` Velocity-Verlet integration steps per frame. The integrator is in `GravitySimulationEngine.step(dt:)`; the GR force (`NBodyGravity.pairAcceleration`) is Newtonian gravity plus a Schwarzschild-style −3GmL²/(c²r⁴) correction, which gives the correct perihelion precession but is not the full 1PN Einstein-Infeld-Hoffmann equations.
+**Simulation loop** — A 60 fps task calls `tick()`, which runs `stepsPerFrame` integration steps per frame (scaled by the Advanced accuracy/speed multipliers and capped by `FrameStepPlanner.stepCap`, which divides the budget by the integrator's force evaluations per step and by the number of engines). The integrator is selectable in `EngineSettings` — Velocity-Verlet (default, `NBodyGravity.verletStep`), RK4 or Yoshida 4 (`Physics/Integrators.swift`). Verlet and Yoshida use v(t) in the velocity-dependent GR term, so they are only 1st-order in it; RK4 is not. Softening also comes from `EngineSettings` (default 5 px) — use the engine's `softeningLength`, not the static constant. the GR force (`NBodyGravity.pairAcceleration`) is Newtonian gravity plus a Schwarzschild-style −3GmL²/(c²r⁴) correction, which gives the correct perihelion precession but is not the full 1PN Einstein-Infeld-Hoffmann equations.
 
 **Orientation layout** — `ContentView` uses `GeometryReader` to detect landscape (`width > height`) and switches layouts. Landscape hides mass/distance sliders and the black hole toggle (`showParameterControls: false` on `ControlPanelView`).
 

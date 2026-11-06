@@ -54,9 +54,10 @@
 //
 //  ## Numerical Integration
 //
-//  The engine uses the Velocity-Verlet (Störmer-Verlet) symplectic
+//  By default the engine uses the Velocity-Verlet (Störmer-Verlet) symplectic
 //  integrator, which is second-order accurate and conserves energy
 //  over long timescales — essential for stable orbital simulations.
+//  RK4 and Yoshida 4 can be chosen in the Advanced sheet (`EngineSettings`).
 //
 //  ## 3D Extension
 //
@@ -146,8 +147,9 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
     /// c² precomputed for efficiency in metric calculations
     static let cSquared: Double = c * c  // 40,000
 
-    /// Softening length to prevent numerical divergence at r→0.
-    /// Acts as a minimum effective distance in force calculations.
+    /// Default softening length to prevent numerical divergence at r→0.
+    /// Acts as a minimum effective distance in force calculations. Each engine
+    /// uses `settings.effectiveSoftening`, which the Advanced sheet can change.
     static let softening: Double = 5.0
 
     /// Visual threshold for black hole classification.
@@ -181,13 +183,21 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
     /// Bookkeeping for the N-body feature set.
     var nBodyState: NBodyState
 
+    /// Integrator, softening, and collision mode, fixed for the engine's lifetime.
+    let settings: EngineSettings
+
+    /// Softening length used everywhere in this engine (never below the safety floor).
+    var softeningLength: Double { settings.effectiveSoftening }
+
     /// - Precondition: `bodies` must not be empty.
-    init(bodies: [CelestialBody]) {
+    init(bodies: [CelestialBody], settings: EngineSettings = EngineSettings()) {
         precondition(!bodies.isEmpty, "GravitySimulationEngine needs at least one body")
-        let initial = NBodyGravity.withAccelerations(bodies)
+        let softening = settings.effectiveSoftening
+        let initial = NBodyGravity.withAccelerations(bodies, softening: softening)
         self.bodies = initial
+        self.settings = settings
         self.isTwoBodyScenario = initial.count == 2
-        self.nBodyState = NBodyState(bodies: initial)
+        self.nBodyState = NBodyState(bodies: initial, softening: softening)
 
         if isTwoBodyScenario {
             twoBodyState.body2InitialMass = initial[1].mass
@@ -216,10 +226,9 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
 
     /// Advances the simulation by one time step `dt`.
     ///
-    /// Integration is Velocity-Verlet (Störmer-Verlet), a second-order
-    /// symplectic integrator that keeps energy error bounded over long runs —
-    /// essential for orbital simulations. The scenario-specific step wraps the
-    /// shared `integrate(dt:)` with its own collision and bookkeeping logic.
+    /// Integration uses `settings.integrator` (Velocity-Verlet by default, see
+    /// `Integrators.swift`). The scenario-specific step wraps the shared
+    /// `integrate(dt:)` with its own collision and bookkeeping logic.
     func step(dt: Double) {
         if isTwoBodyScenario {
             stepTwoBody(dt: dt)
@@ -228,8 +237,8 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
         }
     }
 
-    /// Velocity-Verlet update of every body (shared by both scenarios).
+    /// Integrator update of every body (shared by both scenarios).
     func integrate(dt: Double) {
-        bodies = NBodyGravity.verletStep(bodies, dt: dt)
+        bodies = settings.integrator.step(bodies, dt: dt, softening: softeningLength)
     }
 }

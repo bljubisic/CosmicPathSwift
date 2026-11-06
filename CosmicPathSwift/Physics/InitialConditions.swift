@@ -137,7 +137,7 @@ enum InitialConditions {
     private static func eccentricPlanetSpeed(config: SimulationConfig, periapsis: Double, eccentricity: Double) -> Double {
         let mass1 = config.simulationMass1
         let totalMass = mass1 + config.simulationMass2
-        let semiMajorAxis = max(config.simulationSeparation, GravitySimulationEngine.softening * 2)
+        let semiMajorAxis = max(config.simulationSeparation, minimumStartDistance(config: config))
         let apoapsis = semiMajorAxis * (1 + eccentricity)
         let relativeSpeed = periapsisSpeed(totalMass: totalMass, periapsis: periapsis, apoapsis: apoapsis)
             ?? sqrt(G * totalMass * (1 + eccentricity) / periapsis)
@@ -164,9 +164,14 @@ enum InitialConditions {
         return sqrt(numerator / denominator) / rp
     }
 
+    /// Closest allowed starting distance: twice the configured softening length.
+    static func minimumStartDistance(config: SimulationConfig) -> Double {
+        2 * config.advanced.engine.effectiveSoftening
+    }
+
     /// Starting (periapsis) distance a(1 − e), never below twice the softening length.
     static func periapsisDistance(config: SimulationConfig) -> Double {
-        let minimum = GravitySimulationEngine.softening * 2
+        let minimum = minimumStartDistance(config: config)
         let semiMajorAxis = max(config.simulationSeparation, minimum)
         let eccentricity = clampedEccentricity(config.advanced.initial.eccentricity)
         return max(semiMajorAxis * (1 - eccentricity), minimum)
@@ -223,7 +228,10 @@ enum InitialConditions {
         let roche = GravitySimulationEngine.rocheLimit(centralMass: config.simulationMass1,
                                                        planetMass: config.simulationMass2)
         if isBlackHole && r <= rs { return .eventHorizon }
-        if !config.isBlackHoleMode && r <= GravitySimulationEngine.starSurfaceRadius(schwarzschildRadius: rs) {
+        let surface = GravitySimulationEngine.starSurfaceRadius(
+            schwarzschildRadius: rs, softening: config.advanced.engine.effectiveSoftening
+        )
+        if !config.isBlackHoleMode && r <= surface {
             return .starSurface
         }
         if r < roche { return .rocheLimit }

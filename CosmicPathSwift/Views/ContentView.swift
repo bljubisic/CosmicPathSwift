@@ -44,9 +44,9 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         // Share sheet: includes Save Video, AirDrop, Messages, Mail, and all installed apps.
-        // Shown when stopRecording() sets pendingRecording; dismissing clears it, and
-        // the view model deletes the temp file regardless of outcome.
-        .sheet(item: $viewModel.pendingRecording) { recording in
+        // Shown when recorder.stop() sets pendingRecording; dismissing clears it, and
+        // the recorder deletes the temp file regardless of outcome.
+        .sheet(item: Bindable(viewModel.recorder).pendingRecording) { recording in
             VideoShareSheet(url: recording.url)
         }
         .sheet(isPresented: $isShowingAdvanced) {
@@ -167,16 +167,16 @@ struct ContentView: View {
     /// an active recording. When stopped, `pendingRecording` triggers the save/share sheet.
     private var recordButton: some View {
         Button {
-            if viewModel.isRecording {
-                viewModel.stopRecording()
+            if viewModel.recorder.isRecording {
+                viewModel.recorder.stop()
             } else {
-                viewModel.startRecording()
+                viewModel.recorder.start()
             }
         } label: {
-            Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
+            Image(systemName: viewModel.recorder.isRecording ? "stop.circle.fill" : "record.circle")
                 .font(.title2)
                 .foregroundStyle(.red)
-                .symbolEffect(.pulse, isActive: viewModel.isRecording)
+                .symbolEffect(.pulse, isActive: viewModel.recorder.isRecording)
         }
         .buttonStyle(.plain)
     }

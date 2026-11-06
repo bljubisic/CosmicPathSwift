@@ -12,7 +12,8 @@ import SwiftUI
 /// Advanced options, grouped by topic, each with a short explanation.
 ///
 /// Edits go straight into `viewModel.config.advanced`. Time, display and camera
-/// options take effect immediately, even while the simulation is running. The settings are
+/// options take effect immediately, even while the simulation is running;
+/// physics and starting conditions restart the simulation, so they're edited while paused. The settings are
 /// kept across Reset; "Restore defaults" returns them to `AdvancedSettings()`.
 struct AdvancedControlsView: View {
     @Bindable var viewModel: SimulationViewModel
@@ -22,6 +23,7 @@ struct AdvancedControlsView: View {
         NavigationStack {
             Form {
                 timeSection
+                PhysicsSettingsSection(viewModel: viewModel)
                 startingConditionsSection
                 displaySection
                 cameraSection
@@ -80,7 +82,7 @@ struct AdvancedControlsView: View {
             }
             .pickerStyle(.segmented)
             if viewModel.isSpeedLimited {
-                Text("Limited by CPU at this accuracy")
+                Text("Limited by CPU at this accuracy and integrator")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -312,13 +314,7 @@ struct AdvancedControlsView: View {
         caption: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-            Text(caption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            content()
-        }
+        CaptionedRow(title, caption: caption, content: content)
     }
 
     /// "¼", "½" or a whole number, for the multiplier pickers.

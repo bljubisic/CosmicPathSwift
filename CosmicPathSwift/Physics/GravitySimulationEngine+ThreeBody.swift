@@ -9,7 +9,7 @@
 //  ## Collisions
 //
 //  Two bodies merge when they come within max(2rₛᵢ, 2rₛⱼ, 2·softening) of each
-//  other. The merge is perfectly inelastic: the heavier body survives (keeping
+//  other, unless the collision mode is pass-through. The merge is perfectly inelastic: the heavier body survives (keeping
 //  its ID, kind, and trail) with the summed mass, the momentum-weighted velocity,
 //  and the pair's CoM position. Total mass and momentum are conserved exactly.
 //
@@ -55,11 +55,11 @@ extension GravitySimulationEngine {
         /// can be excluded from the drift metric.
         var mergeEnergyChange: Double = 0
 
-        init(bodies: [CelestialBody]) {
+        init(bodies: [CelestialBody], softening: Double) {
             let com = NBodyGravity.centerOfMass(bodies)
             let extent = bodies.map { ($0.position - com).magnitude }.max() ?? 0
             let mass = NBodyGravity.totalMass(bodies)
-            initialEnergy = NBodyGravity.newtonianEnergy(bodies)
+            initialEnergy = NBodyGravity.newtonianEnergy(bodies, softening: softening)
             initialExtent = extent
 
             if extent > 0 && mass > 0 {
@@ -74,13 +74,15 @@ extension GravitySimulationEngine {
 
     // MARK: - Step
 
-    /// One N-body step: integrate, merge colliding bodies, sample trails,
-    /// detect ejection, and refresh `systemMetrics`.
+    /// One N-body step: integrate, merge colliding bodies (unless the collision
+    /// mode is pass-through), sample trails, detect ejection, and refresh `systemMetrics`.
     func stepNBody(dt: Double) {
         let previousPositions = bodies.map(\.position)
         integrate(dt: dt)
         systemMetrics.elapsedTime += dt
-        resolveCollision()
+        if settings.collisionMode == .merge {
+            resolveCollision()
+        }
         recordTrailsIfDue(from: previousPositions, dt: dt)
         detectEjection()
         updateSystemMetrics()
@@ -89,7 +91,11 @@ extension GravitySimulationEngine {
     // MARK: - Collisions
 
     /// Distance at which two bodies merge: max(2rₛᵢ, 2rₛⱼ, 2·softening).
-    static func collisionDistance(_ a: CelestialBody, _ b: CelestialBody) -> Double {
+    static func collisionDistance(
+        _ a: CelestialBody,
+        _ b: CelestialBody,
+        softening: Double = GravitySimulationEngine.softening
+    ) -> Double {
         let rsA = 2.0 * G * a.mass / cSquared
         let rsB = 2.0 * G * b.mass / cSquared
         return max(2.0 * rsA, 2.0 * rsB, 2.0 * softening)
@@ -100,7 +106,7 @@ extension GravitySimulationEngine {
         for i in bodies.indices {
             for j in bodies.indices where j > i {
                 let distance = (bodies[i].position - bodies[j].position).magnitude
-                if distance <= Self.collisionDistance(bodies[i], bodies[j]) {
+                if distance <= Self.collisionDistance(bodies[i], bodies[j], softening: softeningLength) {
                     merge(i, j)
                     return
                 }
@@ -110,7 +116,7 @@ extension GravitySimulationEngine {
 
     /// Replaces bodies i and j with a single inelastically merged body.
     private func merge(_ i: Int, _ j: Int) {
-        let energyBefore = NBodyGravity.newtonianEnergy(bodies)
+        let energyBefore = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength)
         let (survivorIndex, absorbedIndex) = bodies[i].mass >= bodies[j].mass ? (i, j) : (j, i)
         let survivor = bodies[survivorIndex]
         let absorbed = bodies[absorbedIndex]
@@ -124,9 +130,9 @@ extension GravitySimulationEngine {
         var remaining = bodies
         remaining[survivorIndex] = merged
         remaining.remove(at: absorbedIndex)
-        bodies = NBodyGravity.withAccelerations(remaining)
+        bodies = NBodyGravity.withAccelerations(remaining, softening: softeningLength)
 
-        nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(bodies) - energyBefore
+        nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - energyBefore
         systemMetrics.collision = (survivor.id, absorbed.id)
     }
 
@@ -171,7 +177,7 @@ extension GravitySimulationEngine {
     func updateSystemMetrics() {
         let initialEnergy = nBodyState.initialEnergy
         if initialEnergy != 0 {
-            let energy = NBodyGravity.newtonianEnergy(bodies) - nBodyState.mergeEnergyChange
+            let energy = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - nBodyState.mergeEnergyChange
             systemMetrics.energyDrift = (energy - initialEnergy) / abs(initialEnergy)
         }
 

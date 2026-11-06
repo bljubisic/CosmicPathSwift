@@ -15,7 +15,7 @@ struct AdvancedSettingsTests {
     private let canvas = CGSize(width: 400, height: 300)
 
     private func makeViewModel() -> SimulationViewModel {
-        SimulationViewModel { bodies in MockSimulationEngine(bodies: bodies) }
+        SimulationViewModel { bodies, _ in MockSimulationEngine(bodies: bodies) }
     }
 
     /// A value with every display option changed from its default.
@@ -32,6 +32,20 @@ struct AdvancedSettingsTests {
     private var nonDefaultInitial: InitialConditionSettings {
         InitialConditionSettings(eccentricity: 0.4, periapsisAngleDeg: 90, chaosEpsilon: 1e-6,
                                  showUnperturbedTwin: true, customLayout: .random, customSeed: 4242)
+    }
+
+    /// A value with every physics setting changed from its default.
+    private var nonDefaultEngine: EngineSettings {
+        EngineSettings(integrator: .yoshida4, softening: 2, collisionMode: .passThrough)
+    }
+
+    /// Defaults must reproduce the original physics: Verlet, 5 px softening, merges.
+    @Test func engineDefaultsAreNeutral() {
+        let engine = SimulationConfig().advanced.engine
+        #expect(engine.integrator == .velocityVerlet)
+        #expect(engine.softening == GravitySimulationEngine.softening)
+        #expect(engine.collisionMode == .merge)
+        #expect(EngineSettings.softeningChoices.contains(engine.softening))
     }
 
     /// Defaults must reproduce the original start: circular orbit, no nudge, triangle.
@@ -67,6 +81,7 @@ struct AdvancedSettingsTests {
         vm.config.advanced.display = nonDefaultDisplay
         vm.config.advanced.time = nonDefaultTime
         vm.config.advanced.initial = nonDefaultInitial
+        vm.config.advanced.engine = nonDefaultEngine
         vm.config.mass1Multiplier = 5
 
         vm.reset(canvasSize: canvas)
@@ -74,6 +89,7 @@ struct AdvancedSettingsTests {
         #expect(vm.config.advanced.display == nonDefaultDisplay)
         #expect(vm.config.advanced.time == nonDefaultTime)
         #expect(vm.config.advanced.initial == nonDefaultInitial)
+        #expect(vm.config.advanced.engine == nonDefaultEngine)
         // Basic sliders are still reset as before.
         #expect(vm.config.mass1Multiplier == SimulationConfig().mass1Multiplier)
     }
@@ -84,6 +100,7 @@ struct AdvancedSettingsTests {
         vm.config.advanced.display = nonDefaultDisplay
         vm.config.advanced.time = nonDefaultTime
         vm.config.advanced.initial = nonDefaultInitial
+        vm.config.advanced.engine = nonDefaultEngine
 
         vm.restoreAdvancedDefaults()
 
@@ -109,7 +126,9 @@ struct AdvancedSettingsTests {
 
     /// The settings are Codable so they can be persisted later; the round trip must be lossless.
     @Test func codableRoundTrip() throws {
-        let settings = AdvancedSettings(display: nonDefaultDisplay, time: nonDefaultTime, initial: nonDefaultInitial)
+        let settings = AdvancedSettings(
+            display: nonDefaultDisplay, time: nonDefaultTime, initial: nonDefaultInitial, engine: nonDefaultEngine
+        )
         let data = try JSONEncoder().encode(settings)
         #expect(try JSONDecoder().decode(AdvancedSettings.self, from: data) == settings)
     }

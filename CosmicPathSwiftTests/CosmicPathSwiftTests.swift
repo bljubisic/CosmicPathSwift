@@ -30,9 +30,12 @@ class MockSimulationEngine: SimulationEngineProtocol {
     var stepCount = 0
     /// Time step passed to the most recent `step(dt:)` call.
     var lastDt: Double?
+    /// Physics settings the factory passed in, if any (to test the config → engine mapping).
+    let settings: EngineSettings?
 
-    init(bodies: [CelestialBody]) {
+    init(bodies: [CelestialBody], settings: EngineSettings? = nil) {
         self.bodies = bodies
+        self.settings = settings
     }
 
     func step(dt: Double) {
@@ -481,7 +484,7 @@ struct GravitySimulationEngineTests {
 struct SimulationViewModelTests {
     @Test func setupCreatesEngine() {
         var engineCreated = false
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             engineCreated = true
             return MockSimulationEngine(bodies: bodies)
         }
@@ -491,7 +494,7 @@ struct SimulationViewModelTests {
     }
 
     @Test func startAndPauseToggleRunning() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -504,7 +507,7 @@ struct SimulationViewModelTests {
     }
 
     @Test func resetStopsSimulation() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -519,7 +522,7 @@ struct SimulationViewModelTests {
     /// The view is centred on the CoM, so body1 (at the origin) sits left of
     /// centre by the CoM offset m₂·d/(m₁+m₂).
     @Test func body1OffsetFromCenterByCenterOfMass() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -534,7 +537,7 @@ struct SimulationViewModelTests {
     /// Body2 starts at (separation, 0, 0). At azimuth=0 the x-axis maps directly to
     /// screen-x, so body2Position.x = centerX + (separation − comX)·scale at any elevation.
     @Test func body2PositionOffsetFromCenter() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.config.separationAU = 100.0 / CelestialConstants.baseAU
@@ -551,7 +554,7 @@ struct SimulationViewModelTests {
     /// The projection is linear, so the mass-weighted mean of the canvas positions
     /// is the projected CoM — which must stay at the canvas centre after rotation.
     @Test func rotateCameraKeepsCenterOfMassAtCanvasCenter() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))

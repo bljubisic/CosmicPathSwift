@@ -130,7 +130,7 @@ struct DisplayControlsViewModelTests {
     /// A paused 2-body view model whose mock bodies already have long trails.
     private func makeViewModel() -> (SimulationViewModel, EngineBox) {
         let box = EngineBox()
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             let withTrails = bodies.map { body in
                 var copy = body
                 copy.trail = Array(repeating: body.position, count: Self.prefilledTrailLength)

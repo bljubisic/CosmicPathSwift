@@ -52,6 +52,14 @@ struct FrameStepPlanner {
         return whole
     }
 
+    /// Step cap for one frame. `TimeSettings.maxStepsPerFrame` is a budget of
+    /// Verlet steps (one force evaluation each), so costlier integrators and
+    /// extra engines (the chaos twin) share it out. Never below 1.
+    static func stepCap(integrator: IntegratorKind, engineCount: Int) -> Int {
+        let cost = integrator.forceEvaluationsPerStep * max(engineCount, 1)
+        return max(TimeSettings.maxStepsPerFrame / cost, 1)
+    }
+
     /// Clears the carried fraction (a new simulation starts on a whole frame).
     mutating func reset() {
         carry = 0
