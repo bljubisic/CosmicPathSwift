@@ -242,6 +242,27 @@ struct RelativisticMetrics {
     /// the Schwarzschild metric: dτ/dt = √((1 - rₛ/r) - v²/c²).
     var properTime: Double = 0
 
+    // MARK: - Diagnostics
+
+    /// Coordinate time t elapsed since the run started (simulation units).
+    var elapsedTime: Double = 0
+
+    /// Relative drift (E − E₀)/|E₀| of the relative orbit's GR-corrected energy
+    /// (see `RelativeOrbit.energy`). That energy is exactly conserved by the
+    /// force law, so this is pure integrator error. Energy changes from tidal
+    /// mass loss are excluded.
+    var energyDrift: Double = 0
+
+    /// Relative drift |L − L₀|/L₀ of the specific angular momentum |r × v|.
+    /// Also exactly conserved by the force law, so also pure integrator error.
+    var angularMomentumDrift: Double = 0
+
+    /// Separation at the most recent periapsis (local minimum), if one was seen.
+    var periapsisDistance: Double?
+
+    /// Separation at the most recent apoapsis (local maximum), if one was seen.
+    var apoapsisDistance: Double?
+
     /// Color representing the current gravitational time dilation severity.
     /// Transitions from cyan (weak field) through blue and purple to
     /// red (extreme dilation near the event horizon).
@@ -275,6 +296,14 @@ struct SystemMetrics {
     /// error plus the non-conservative part of the GR correction term — it is
     /// nonzero partly because GR is switched on.
     var energyDrift: Double = 0
+
+    /// Relative drift of the total angular momentum, |L − L₀ − ΔL_merge| / L_ref.
+    ///
+    /// Pair forces are central and equal and opposite, so L is exactly conserved
+    /// and this is pure integrator error. The internal L lost in merges is
+    /// excluded. L_ref is |L₀|, or a characteristic M·√(GMR) for systems that
+    /// start without net spin (figure-eight, Pythagorean).
+    var angularMomentumDrift: Double = 0
 
     /// Smallest pairwise separation reached so far (simulation pixels).
     var closestApproach: Double = .infinity
@@ -609,6 +638,10 @@ struct AdvancedSettings: Equatable, Codable, Sendable {
     /// Integrator, softening, and collision mode. Changing these restarts the
     /// setup with a new engine, so they are edited while paused.
     var engine = EngineSettings()
+
+    /// Habitable-zone flux limits and planet albedo. Rendering-only, so they
+    /// apply immediately, even while running.
+    var habitableZone = HabitableZoneSettings()
 }
 
 /// Time and integration options from the Advanced sheet.

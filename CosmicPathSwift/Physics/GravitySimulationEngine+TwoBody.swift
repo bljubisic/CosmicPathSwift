@@ -56,6 +56,22 @@ extension GravitySimulationEngine {
         /// Accumulated proper time of body2 (always ≤ coordinate time).
         /// dτ/dt = √((1 - rₛ/r) - v²/c²) combines gravitational and velocity dilation.
         var accumulatedProperTime: Double = 0
+
+        // Diagnostics (issue #20, PR 6).
+
+        /// Coordinate time integrated so far.
+        var elapsedTime: Double = 0
+        /// Relative-orbit energy at t = 0, the baseline for ΔE/E.
+        var initialEnergy: Double = 0
+        /// Relative-orbit |r × v| at t = 0, the baseline for ΔL/L.
+        var initialAngularMomentum: Double = 0
+        /// Sum of the energy jumps caused by tidal mass loss (which changes M),
+        /// excluded from the drift like merges are in 3-body mode.
+        var strippingEnergyChange: Double = 0
+        /// Separation at the most recent periapsis.
+        var lastPeriapsis: Double?
+        /// Separation at the most recent apoapsis.
+        var lastApoapsis: Double?
     }
 
     // MARK: - Step
@@ -71,6 +87,7 @@ extension GravitySimulationEngine {
 
         let previousPositions = bodies.map(\.position)
         integrate(dt: dt)
+        twoBodyState.elapsedTime += dt
 
         // Separation uses the full 3D distance so inclined orbits are handled correctly.
         let rs = 2.0 * Self.G * bodies[0].mass / Self.cSquared
@@ -180,7 +197,9 @@ extension GravitySimulationEngine {
         let initialMass = twoBodyState.body2InitialMass
         let tideFraction = max(0.0, 1.0 - sep / rocheLimit)
         let massLossRate = bodies[1].mass * 0.08 * tideFraction
+        let energyBefore = relativeOrbitEnergy()
         bodies[1].mass = max(bodies[1].mass - massLossRate * dt, initialMass * 0.005)
+        twoBodyState.strippingEnergyChange += relativeOrbitEnergy() - energyBefore
 
         emitBleedParticlesIfDue(dt: dt)
 
@@ -249,24 +268,34 @@ extension GravitySimulationEngine {
     // MARK: - Precession Tracking
 
     /// Detects perihelion passages and measures the accumulated precession angle.
+    /// Also records the separation at each periapsis and apoapsis, for the
+    /// predicted precession in the Advanced sheet.
     ///
     /// A perihelion (closest approach) occurs when the separation transitions from
     /// decreasing to increasing — a local minimum in r(t). At each perihelion we
     /// record θ = atan2(y, x) in the x-y plane (the projection approximates the true
     /// in-plane angle for small inclinations). The angular difference between
     /// successive perihelions is exactly 2π for a closed Newtonian orbit; any excess
-    /// is the precession caused by the GR correction term −3GML²/(c²r⁴).
+    /// is the precession caused by the GR correction term −3GML²/(c²r⁴). Since
+    /// atan2 wraps, that excess is the angle difference itself, wrapped to (−π, π].
     private func trackPrecession() {
         let r = bodies[1].position - bodies[0].position
         let currentSep = r.magnitude
         let isShrinking = currentSep < twoBodyState.previousSeparation
 
+        if !twoBodyState.wasShrinking && isShrinking {
+            // Growing → shrinking: the previous sample was an apoapsis.
+            twoBodyState.lastApoapsis = max(twoBodyState.previousSeparation, currentSep)
+        }
+
         if twoBodyState.wasShrinking && !isShrinking {
+            twoBodyState.lastPeriapsis = min(twoBodyState.previousSeparation, currentSep)
             let angle = atan2(r.y, r.x)
             if let lastAngle = twoBodyState.lastPerihelionAngle {
-                var delta = angle - lastAngle
-                if delta < 0 { delta += 2.0 * .pi }
-                twoBodyState.accumulatedPrecession += delta - 2.0 * .pi
+                // After one full turn the periapsis is back near the same angle, so the
+                // wrapped difference is the advance itself. Wrapping to (−π, π] keeps
+                // its sign (prograde > 0) for any advance below 180° per orbit.
+                twoBodyState.accumulatedPrecession += remainder(angle - lastAngle, 2.0 * .pi)
                 twoBodyState.orbitsCompleted += 1
             }
             twoBodyState.lastPerihelionAngle = angle
@@ -310,5 +339,50 @@ extension GravitySimulationEngine {
         metrics.separation = r
         metrics.properTime = twoBodyState.accumulatedProperTime
         metrics.orbitsCompleted = twoBodyState.orbitsCompleted
+        updateDiagnosticMetrics()
+    }
+
+    // MARK: - Diagnostics
+
+    /// Relative position and velocity of the planet with respect to the central body.
+    private var relativeState: (r: Vector3D, v: Vector3D) {
+        (bodies[1].position - bodies[0].position, bodies[1].velocity - bodies[0].velocity)
+    }
+
+    /// GR-corrected energy of the relative orbit, conserved by the force law.
+    func relativeOrbitEnergy() -> Double {
+        let (r, v) = relativeState
+        return RelativeOrbit.energy(r: r, v: v, totalMass: bodies[0].mass + bodies[1].mass, softening: softeningLength)
+    }
+
+    /// Specific angular momentum |r × v| of the relative orbit.
+    func relativeOrbitAngularMomentum() -> Double {
+        let (r, v) = relativeState
+        return RelativeOrbit.angularMomentum(r: r, v: v)
+    }
+
+    /// Stores the t = 0 baselines for the drift metrics.
+    func recordInitialInvariants() {
+        twoBodyState.initialEnergy = relativeOrbitEnergy()
+        twoBodyState.initialAngularMomentum = relativeOrbitAngularMomentum()
+    }
+
+    /// Refreshes coordinate time, ΔE/E, ΔL/L and the turning points. The drifts
+    /// keep their last values once the planet is absorbed (its state is frozen).
+    private func updateDiagnosticMetrics() {
+        metrics.elapsedTime = twoBodyState.elapsedTime
+        metrics.periapsisDistance = twoBodyState.lastPeriapsis
+        metrics.apoapsisDistance = twoBodyState.lastApoapsis
+        guard !metrics.isAbsorbed else { return }
+
+        let initialEnergy = twoBodyState.initialEnergy
+        if initialEnergy != 0 {
+            let energy = relativeOrbitEnergy() - twoBodyState.strippingEnergyChange
+            metrics.energyDrift = (energy - initialEnergy) / abs(initialEnergy)
+        }
+        let initialL = twoBodyState.initialAngularMomentum
+        if initialL > 0 {
+            metrics.angularMomentumDrift = abs(relativeOrbitAngularMomentum() - initialL) / initialL
+        }
     }
 }

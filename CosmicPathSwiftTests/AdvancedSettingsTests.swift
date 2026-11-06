@@ -39,6 +39,21 @@ struct AdvancedSettingsTests {
         EngineSettings(integrator: .yoshida4, softening: 2, collisionMode: .passThrough)
     }
 
+    /// A value with both habitable-zone settings changed from their defaults.
+    private var nonDefaultHabitableZone: HabitableZoneSettings {
+        HabitableZoneSettings(limits: .optimistic, bondAlbedo: 0.6)
+    }
+
+    /// Defaults must reproduce the original zone: 1.1 / 0.53 flux limits, albedo 0.3.
+    @Test func habitableZoneDefaultsAreNeutral() {
+        let settings = SimulationConfig().advanced.habitableZone
+        #expect(settings.limits == .conservative)
+        #expect(settings.limits.innerFlux == 1.1)
+        #expect(settings.limits.outerFlux == 0.53)
+        #expect(settings.bondAlbedo == 0.3)
+        #expect(HabitableZoneSettings.albedoRange.contains(settings.bondAlbedo))
+    }
+
     /// Defaults must reproduce the original physics: Verlet, 5 px softening, merges.
     @Test func engineDefaultsAreNeutral() {
         let engine = SimulationConfig().advanced.engine
@@ -82,6 +97,7 @@ struct AdvancedSettingsTests {
         vm.config.advanced.time = nonDefaultTime
         vm.config.advanced.initial = nonDefaultInitial
         vm.config.advanced.engine = nonDefaultEngine
+        vm.config.advanced.habitableZone = nonDefaultHabitableZone
         vm.config.mass1Multiplier = 5
 
         vm.reset(canvasSize: canvas)
@@ -90,6 +106,7 @@ struct AdvancedSettingsTests {
         #expect(vm.config.advanced.time == nonDefaultTime)
         #expect(vm.config.advanced.initial == nonDefaultInitial)
         #expect(vm.config.advanced.engine == nonDefaultEngine)
+        #expect(vm.config.advanced.habitableZone == nonDefaultHabitableZone)
         // Basic sliders are still reset as before.
         #expect(vm.config.mass1Multiplier == SimulationConfig().mass1Multiplier)
     }
@@ -101,6 +118,7 @@ struct AdvancedSettingsTests {
         vm.config.advanced.time = nonDefaultTime
         vm.config.advanced.initial = nonDefaultInitial
         vm.config.advanced.engine = nonDefaultEngine
+        vm.config.advanced.habitableZone = nonDefaultHabitableZone
 
         vm.restoreAdvancedDefaults()
 
@@ -127,7 +145,8 @@ struct AdvancedSettingsTests {
     /// The settings are Codable so they can be persisted later; the round trip must be lossless.
     @Test func codableRoundTrip() throws {
         let settings = AdvancedSettings(
-            display: nonDefaultDisplay, time: nonDefaultTime, initial: nonDefaultInitial, engine: nonDefaultEngine
+            display: nonDefaultDisplay, time: nonDefaultTime, initial: nonDefaultInitial, engine: nonDefaultEngine,
+            habitableZone: nonDefaultHabitableZone
         )
         let data = try JSONEncoder().encode(settings)
         #expect(try JSONDecoder().decode(AdvancedSettings.self, from: data) == settings)

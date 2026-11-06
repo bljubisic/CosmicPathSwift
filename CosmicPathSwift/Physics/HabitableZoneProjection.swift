@@ -39,13 +39,15 @@ struct HabitableZoneProjection: Equatable {
     /// - Parameters:
     ///   - maxExtent: Current zoom extent in simulation units (for the off-screen flag).
     ///   - isAbsorbed: When true the planet is gone, so no status or temperature.
+    ///   - albedo: Planet's Bond albedo for the equilibrium temperature.
     static func project(
         zone: HabitableZone,
         star: CelestialBody,
         planet: CelestialBody,
         transformer: CoordinateTransformer,
         maxExtent: Double,
-        isAbsorbed: Bool
+        isAbsorbed: Bool,
+        albedo: Double = HabitableZonePhysics.bondAlbedo
     ) -> HabitableZoneProjection {
         let normal = orbitalNormal(star: star, planet: planet)
         let ring = { (radius: Double) in
@@ -59,7 +61,7 @@ struct HabitableZoneProjection: Equatable {
             outerRing: ring(zone.outerPx),
             status: isAbsorbed ? nil : zone.status(atDistanceAU: distanceAU),
             equilibriumTemperature: isAbsorbed ? nil : HabitableZonePhysics.equilibriumTemperature(
-                luminosity: zone.luminosity, distanceAU: distanceAU
+                luminosity: zone.luminosity, distanceAU: distanceAU, albedo: albedo
             ),
             isOffScreen: zone.innerPx > maxExtent * offScreenFactor
         )

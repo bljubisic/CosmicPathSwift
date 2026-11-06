@@ -41,6 +41,9 @@ class MockSimulationEngine: SimulationEngineProtocol {
     func step(dt: Double) {
         stepCount += 1
         lastDt = dt
+        // Advance coordinate time like the real engine, so diagnostics record samples.
+        metrics.elapsedTime += dt
+        systemMetrics.elapsedTime += dt
         // Move the last body slightly each step to simulate motion
         let last = bodies.count - 1
         bodies[last].position = bodies[last].position + Vector3D(x: dt, y: 0, z: 0)
@@ -449,8 +452,9 @@ struct GravitySimulationEngineTests {
             engine.step(dt: 0.01)
         }
 
-        // GR correction causes the perihelion to precess — angle must be non-zero
-        #expect(abs(engine.metrics.precessionAngle) > 0.01)
+        // GR correction makes the perihelion advance (prograde), never by ~−360° per orbit.
+        #expect(engine.metrics.precessionAngle > 0.01)
+        #expect(engine.metrics.precessionAngle < 180 * Double(max(engine.metrics.orbitsCompleted, 1)))
     }
 
     @Test func absorbedEngineStopsUpdating() {

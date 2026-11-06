@@ -202,6 +202,7 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
         if isTwoBodyScenario {
             twoBodyState.body2InitialMass = initial[1].mass
             twoBodyState.previousSeparation = (initial[1].position - initial[0].position).magnitude
+            recordInitialInvariants()
             updateMetrics()
         } else {
             updateSystemMetrics()

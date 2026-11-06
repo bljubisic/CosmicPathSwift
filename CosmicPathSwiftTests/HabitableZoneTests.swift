@@ -67,6 +67,29 @@ struct HabitableZonePhysicsTests {
         let zone = HabitableZone(luminosity: 1)
         #expect(zone.status(atDistanceAU: distanceAU) == expected)
     }
+
+    // MARK: Settings (issue #20, PR 6)
+
+    /// T ∝ (1 − A)^¼, so a brighter planet is cooler by that factor.
+    @Test func albedoScalesTemperature() {
+        let standard = HabitableZonePhysics.equilibriumTemperature(luminosity: 1, distanceAU: 1)
+        let reflective = HabitableZonePhysics.equilibriumTemperature(luminosity: 1, distanceAU: 1, albedo: 0.6)
+        #expect(abs(reflective - standard * pow((1 - 0.6) / (1 - 0.3), 0.25)) < 1e-9)
+    }
+
+    @Test func optimisticLimitsWidenZone() {
+        let conservative = HabitableZone(luminosity: 1, limits: .conservative)
+        let optimistic = HabitableZone(luminosity: 1, limits: .optimistic)
+        #expect(optimistic.innerAU < conservative.innerAU)
+        #expect(optimistic.outerAU > conservative.outerAU)
+        #expect(conservative == HabitableZone(luminosity: 1))
+    }
+
+    @Test func forCentralBodyUsesConfiguredLimits() {
+        var config = SimulationConfig()
+        config.advanced.habitableZone.limits = .optimistic
+        #expect(HabitableZone.forCentralBody(of: config) == HabitableZone(luminosity: 1, limits: .optimistic))
+    }
 }
 
 // MARK: - Ring Geometry
@@ -148,6 +171,29 @@ struct HabitableZoneViewModelTests {
         let temperature = try #require(vm.planetEquilibriumTemperature)
         #expect(abs(temperature - 255) < 1)
         #expect(!vm.isHabitableZoneOffScreen)
+    }
+
+    /// Habitable-zone settings only change rendering: they re-project at once,
+    /// even while running, without building a new engine.
+    @Test func changingSettingsReprojectsWithoutRestart() throws {
+        final class Counter: @unchecked Sendable { var engines = 0 }
+        let counter = Counter()
+        let vm = SimulationViewModel { bodies, _ in
+            counter.engines += 1
+            return MockSimulationEngine(bodies: bodies)
+        }
+        vm.setup(canvasSize: canvas)
+        vm.start()
+        let ring = vm.habitableZoneInnerRing
+        let temperature = try #require(vm.planetEquilibriumTemperature)
+
+        vm.config.advanced.habitableZone = HabitableZoneSettings(limits: .optimistic, bondAlbedo: 0.6)
+
+        #expect(vm.habitableZoneInnerRing != ring)
+        #expect(try #require(vm.planetEquilibriumTemperature) < temperature)
+        #expect(counter.engines == 1)
+        #expect(vm.isRunning)
+        vm.pause()
     }
 
     @Test func heavyStarZoneIsOffScreen() {

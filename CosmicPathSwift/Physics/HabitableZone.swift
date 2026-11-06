@@ -43,10 +43,10 @@ struct HabitableZone: Equatable, Sendable {
     /// Outer (cold) edge in AU.
     let outerAU: Double
 
-    init(luminosity: Double) {
+    init(luminosity: Double, limits: HabitableZoneLimits = .conservative) {
         self.luminosity = luminosity
-        self.innerAU = HabitableZonePhysics.distanceAU(luminosity: luminosity, flux: HabitableZonePhysics.innerFlux)
-        self.outerAU = HabitableZonePhysics.distanceAU(luminosity: luminosity, flux: HabitableZonePhysics.outerFlux)
+        self.innerAU = HabitableZonePhysics.distanceAU(luminosity: luminosity, flux: limits.innerFlux)
+        self.outerAU = HabitableZonePhysics.distanceAU(luminosity: luminosity, flux: limits.outerFlux)
     }
 
     /// Inner edge in simulation pixels.
@@ -63,13 +63,14 @@ struct HabitableZone: Equatable, Sendable {
     }
 
     /// Zone for body1 as configured: a main-sequence star, or an accreting
-    /// black hole when `isBlackHoleMode` is on.
+    /// black hole when `isBlackHoleMode` is on. The flux limits come from the
+    /// Advanced sheet (`config.advanced.habitableZone`).
     static func forCentralBody(of config: SimulationConfig) -> HabitableZone {
         let mass = config.mass1Multiplier
         let luminosity = config.isBlackHoleMode
             ? HabitableZonePhysics.blackHoleLuminosity(solarMasses: mass, eddingtonFraction: config.accretionEddingtonFraction)
             : HabitableZonePhysics.starLuminosity(solarMasses: mass)
-        return HabitableZone(luminosity: luminosity)
+        return HabitableZone(luminosity: luminosity, limits: config.advanced.habitableZone.limits)
     }
 }
 
@@ -88,7 +89,7 @@ enum HabitableZonePhysics {
     /// Eddington luminosity per solar mass, in L☉ (≈ 1.26×10³¹ W / 3.83×10²⁶ W).
     static let eddingtonLuminosityPerSolarMass: Double = 3.2e4
 
-    /// Bond albedo used for the equilibrium temperature (Earth-like).
+    /// Default Bond albedo for the equilibrium temperature (Earth-like).
     static let bondAlbedo: Double = 0.3
 
     /// Equilibrium temperature of a zero-albedo body at 1 AU from the Sun (K).
@@ -119,9 +120,10 @@ enum HabitableZonePhysics {
     }
 
     /// Planetary equilibrium temperature (K): T = 278.6 · (1 − A)^¼ · L^¼ / √d.
-    static func equilibriumTemperature(luminosity: Double, distanceAU: Double) -> Double {
+    static func equilibriumTemperature(luminosity: Double, distanceAU: Double, albedo: Double = bondAlbedo) -> Double {
         guard distanceAU > 0 else { return .infinity }
-        return blackBodyTemperatureAt1AU * pow(1 - bondAlbedo, 0.25) * pow(max(luminosity, 0), 0.25) / sqrt(distanceAU)
+        let absorbed = min(max(1 - albedo, 0), 1)
+        return blackBodyTemperatureAt1AU * pow(absorbed, 0.25) * pow(max(luminosity, 0), 0.25) / sqrt(distanceAU)
     }
 
     /// Points on a circle of `radius` around `center`, in the plane perpendicular

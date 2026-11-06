@@ -54,6 +54,13 @@ extension GravitySimulationEngine {
         /// Sum of the Newtonian energy changes caused by inelastic merges, so they
         /// can be excluded from the drift metric.
         var mergeEnergyChange: Double = 0
+        /// Total angular momentum Σ mᵢ rᵢ × vᵢ at t = 0.
+        let initialAngularMomentum: Vector3D
+        /// Normaliser for ΔL: |L₀|, or M·√(GMR) when the system starts without net spin.
+        let angularMomentumScale: Double
+        /// Sum of the angular-momentum changes caused by merges (the pair's
+        /// internal L), excluded from the drift metric.
+        var mergeAngularMomentumChange: Vector3D = .zero
 
         init(bodies: [CelestialBody], softening: Double) {
             let com = NBodyGravity.centerOfMass(bodies)
@@ -61,6 +68,10 @@ extension GravitySimulationEngine {
             let mass = NBodyGravity.totalMass(bodies)
             initialEnergy = NBodyGravity.newtonianEnergy(bodies, softening: softening)
             initialExtent = extent
+            initialAngularMomentum = NBodyGravity.angularMomentum(bodies)
+            angularMomentumScale = Self.angularMomentumScale(
+                initial: initialAngularMomentum.magnitude, mass: mass, extent: extent
+            )
 
             if extent > 0 && mass > 0 {
                 let dynamicalTime = sqrt(extent * extent * extent / (GravitySimulationEngine.G * mass))
@@ -69,6 +80,13 @@ extension GravitySimulationEngine {
                 trailSampleInterval = 0
             }
             trailSampler = TrailSampler(interval: trailSampleInterval)
+        }
+
+        /// |L₀| unless it is negligible next to the characteristic M·√(GMR),
+        /// which is used instead (figure-eight and Pythagorean have L₀ = 0).
+        private static func angularMomentumScale(initial: Double, mass: Double, extent: Double) -> Double {
+            let characteristic = mass * sqrt(GravitySimulationEngine.G * mass * extent)
+            return initial > 1e-6 * characteristic ? initial : characteristic
         }
     }
 
@@ -117,6 +135,7 @@ extension GravitySimulationEngine {
     /// Replaces bodies i and j with a single inelastically merged body.
     private func merge(_ i: Int, _ j: Int) {
         let energyBefore = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength)
+        let angularMomentumBefore = NBodyGravity.angularMomentum(bodies)
         let (survivorIndex, absorbedIndex) = bodies[i].mass >= bodies[j].mass ? (i, j) : (j, i)
         let survivor = bodies[survivorIndex]
         let absorbed = bodies[absorbedIndex]
@@ -133,6 +152,8 @@ extension GravitySimulationEngine {
         bodies = NBodyGravity.withAccelerations(remaining, softening: softeningLength)
 
         nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - energyBefore
+        nBodyState.mergeAngularMomentumChange = nBodyState.mergeAngularMomentumChange
+            + NBodyGravity.angularMomentum(bodies) - angularMomentumBefore
         systemMetrics.collision = (survivor.id, absorbed.id)
     }
 
@@ -173,12 +194,17 @@ extension GravitySimulationEngine {
 
     // MARK: - Metrics
 
-    /// Refreshes energy drift, closest approach, and peak speed.
+    /// Refreshes energy and angular-momentum drift, closest approach, and peak speed.
     func updateSystemMetrics() {
         let initialEnergy = nBodyState.initialEnergy
         if initialEnergy != 0 {
             let energy = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - nBodyState.mergeEnergyChange
             systemMetrics.energyDrift = (energy - initialEnergy) / abs(initialEnergy)
+        }
+        if nBodyState.angularMomentumScale > 0 {
+            let change = NBodyGravity.angularMomentum(bodies) - nBodyState.initialAngularMomentum
+                - nBodyState.mergeAngularMomentumChange
+            systemMetrics.angularMomentumDrift = change.magnitude / nBodyState.angularMomentumScale
         }
 
         for i in bodies.indices {

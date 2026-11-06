@@ -74,9 +74,11 @@ class SimulationViewModel {
                 // setup, so restart with them (the sheet only allows editing them
                 // while paused).
                 setup(canvasSize: currentCanvasSize)
-            } else if config.advanced.display != oldValue.advanced.display {
-                // Display options only change projection, so re-project at once;
-                // this makes them work while paused as well as while running.
+            } else if config.advanced.display != oldValue.advanced.display
+                        || config.advanced.habitableZone != oldValue.advanced.habitableZone {
+                // Display and habitable-zone options only change projection, so
+                // re-project at once; this makes them work while paused as well
+                // as while running.
                 syncState()
             }
         }
@@ -117,6 +119,31 @@ class SimulationViewModel {
 
     /// Screen recording state and the finished clip awaiting share/save.
     let recorder = ScreenRecorder()
+
+    /// Time series of the current run, for the drift charts and CSV export.
+    let diagnostics = DiagnosticsRecorder()
+
+    /// Osculating elements of the planet's orbit (2-body only, until absorbed).
+    var orbitalElements: OrbitalElements? {
+        guard !isThreeBodyMode, !metrics.isAbsorbed, let bodies = engine?.bodies, bodies.count == 2 else { return nil }
+        return OrbitalElements.osculating(
+            relativePosition: bodies[1].position - bodies[0].position,
+            relativeVelocity: bodies[1].velocity - bodies[0].velocity,
+            totalMass: NBodyGravity.totalMass(bodies)
+        )
+    }
+
+    /// Measured vs predicted precession per orbit (2-body only). Nil until an
+    /// orbit has completed and both turning points have been seen.
+    var precessionComparison: PrecessionComparison? {
+        guard !isThreeBodyMode, metrics.orbitsCompleted > 0,
+              let periapsis = metrics.periapsisDistance, let apoapsis = metrics.apoapsisDistance,
+              let bodies = engine?.bodies else { return nil }
+        return PrecessionComparison(
+            measuredPerOrbit: metrics.precessionAngle / Double(metrics.orbitsCompleted),
+            totalMass: NBodyGravity.totalMass(bodies), periapsis: periapsis, apoapsis: apoapsis
+        )
+    }
 
     /// Current coordinate scale factor (simulation units → canvas pixels).
     /// Used by the view to scale body radii proportionally with zoom.
@@ -301,6 +328,7 @@ class SimulationViewModel {
         engine = engineFactory(bodies, config.advanced.engine)
         engine?.isBlackHoleMode = config.mode == .twoBody && config.isBlackHoleMode
         chaosTwin = makeChaosTwin()
+        diagnostics.reset()
         stepPlanner.reset()
         updateSpeedLimited()
         syncState()
@@ -556,6 +584,18 @@ class SimulationViewModel {
         coordinateScale = transformer.scale
 
         updateHabitableZone(bodies)
+        recordDiagnostics(bodies)
+    }
+
+    /// Offers this frame to the recorder; it ignores frames where time hasn't advanced.
+    private func recordDiagnostics(_ bodies: [CelestialBody]) {
+        let isTwoBody = !isThreeBodyMode
+        diagnostics.record(
+            time: isTwoBody ? metrics.elapsedTime : systemMetrics.elapsedTime,
+            energyDrift: isTwoBody ? metrics.energyDrift : systemMetrics.energyDrift,
+            angularMomentumDrift: isTwoBody ? metrics.angularMomentumDrift : systemMetrics.angularMomentumDrift,
+            bodies: bodies
+        )
     }
 
     // MARK: - Vectors
@@ -582,7 +622,8 @@ class SimulationViewModel {
         if let zone = habitableZone, bodies.count >= 2 {
             projection = .project(
                 zone: zone, star: bodies[0], planet: bodies[1], transformer: transformer,
-                maxExtent: maxExtent, isAbsorbed: metrics.isAbsorbed
+                maxExtent: maxExtent, isAbsorbed: metrics.isAbsorbed,
+                albedo: config.advanced.habitableZone.bondAlbedo
             )
         } else {
             projection = .empty

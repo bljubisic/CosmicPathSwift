@@ -24,8 +24,12 @@ struct AdvancedControlsView: View {
             Form {
                 timeSection
                 PhysicsSettingsSection(viewModel: viewModel)
+                DiagnosticsSection(viewModel: viewModel)
                 startingConditionsSection
                 displaySection
+                if !viewModel.isThreeBodyMode {
+                    HabitableZoneSettingsSection(viewModel: viewModel)
+                }
                 cameraSection
                 restoreSection
             }

@@ -33,7 +33,7 @@ struct PhysicsSettingsSection: View {
     private var integratorPicker: some View {
         CaptionedRow(
             "Integrator",
-            caption: "Verlet is 2nd-order and symplectic: energy error stays bounded. RK4 is 4th-order but energy slowly drifts. Yoshida 4 is 4th-order and symplectic, at 3× the cost. With GR on, Verlet and Yoshida are only 1st-order in the small GR term. Compare them with ΔE/E in 3-Body mode."
+            caption: "Verlet is 2nd-order and symplectic: energy error stays bounded. RK4 is 4th-order but energy slowly drifts. Yoshida 4 is 4th-order and symplectic, at 3× the cost. With GR on, Verlet and Yoshida are only 1st-order in the small GR term. Compare them with the drift charts under Diagnostics."
         ) {
             Picker("Integrator", selection: engine.integrator) {
                 ForEach(IntegratorKind.allCases, id: \.self) { kind in
