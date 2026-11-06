@@ -28,6 +28,22 @@ struct AdvancedSettingsTests {
         TimeSettings(timeStepMultiplier: 0.25, timeSpeed: 4)
     }
 
+    /// A value with every starting condition changed from its default.
+    private var nonDefaultInitial: InitialConditionSettings {
+        InitialConditionSettings(eccentricity: 0.4, periapsisAngleDeg: 90, chaosEpsilon: 1e-6,
+                                 showUnperturbedTwin: true, customLayout: .random, customSeed: 4242)
+    }
+
+    /// Defaults must reproduce the original start: circular orbit, no nudge, triangle.
+    @Test func initialDefaultsAreNeutral() {
+        let initial = SimulationConfig().advanced.initial
+        #expect(initial.eccentricity == 0)
+        #expect(initial.periapsisAngleDeg == 0)
+        #expect(initial.chaosEpsilon == 0)
+        #expect(!initial.isTwinActive)
+        #expect(initial.customLayout == .triangle)
+    }
+
     /// Defaults must reproduce the original pacing: base time step at normal speed.
     @Test func timeDefaultsAreNeutral() {
         let time = SimulationConfig().advanced.time
@@ -50,12 +66,14 @@ struct AdvancedSettingsTests {
         vm.setup(canvasSize: canvas)
         vm.config.advanced.display = nonDefaultDisplay
         vm.config.advanced.time = nonDefaultTime
+        vm.config.advanced.initial = nonDefaultInitial
         vm.config.mass1Multiplier = 5
 
         vm.reset(canvasSize: canvas)
 
         #expect(vm.config.advanced.display == nonDefaultDisplay)
         #expect(vm.config.advanced.time == nonDefaultTime)
+        #expect(vm.config.advanced.initial == nonDefaultInitial)
         // Basic sliders are still reset as before.
         #expect(vm.config.mass1Multiplier == SimulationConfig().mass1Multiplier)
     }
@@ -65,6 +83,7 @@ struct AdvancedSettingsTests {
         vm.setup(canvasSize: canvas)
         vm.config.advanced.display = nonDefaultDisplay
         vm.config.advanced.time = nonDefaultTime
+        vm.config.advanced.initial = nonDefaultInitial
 
         vm.restoreAdvancedDefaults()
 
@@ -90,7 +109,7 @@ struct AdvancedSettingsTests {
 
     /// The settings are Codable so they can be persisted later; the round trip must be lossless.
     @Test func codableRoundTrip() throws {
-        let settings = AdvancedSettings(display: nonDefaultDisplay, time: nonDefaultTime)
+        let settings = AdvancedSettings(display: nonDefaultDisplay, time: nonDefaultTime, initial: nonDefaultInitial)
         let data = try JSONEncoder().encode(settings)
         #expect(try JSONDecoder().decode(AdvancedSettings.self, from: data) == settings)
     }

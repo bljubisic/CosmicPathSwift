@@ -26,19 +26,26 @@ struct FrameStepPlanner {
     /// Fractional step left over from previous frames, in [0, 1).
     private(set) var carry: Double = 0
 
-    /// True when the last frame wanted more than `TimeSettings.maxStepsPerFrame` steps.
+    /// True when the last frame wanted more than its step cap.
     private(set) var isSpeedLimited = false
 
     /// Returns the step count for one frame and updates the carried fraction.
-    mutating func steps(baseSteps: Int, time: TimeSettings) -> Int {
+    ///
+    /// - Parameter maxSteps: Cap on steps this frame. Defaults to
+    ///   `TimeSettings.maxStepsPerFrame`; lowered when more than one engine runs.
+    mutating func steps(
+        baseSteps: Int,
+        time: TimeSettings,
+        maxSteps: Int = TimeSettings.maxStepsPerFrame
+    ) -> Int {
         let exact = Self.exactSteps(baseSteps: baseSteps, time: time) + carry
         let whole = Int((exact + Self.wholeStepTolerance).rounded(.down))
 
-        if whole > TimeSettings.maxStepsPerFrame {
+        if whole > maxSteps {
             // Don't bank the overflow: it would only replay as a burst later.
             carry = 0
             isSpeedLimited = true
-            return TimeSettings.maxStepsPerFrame
+            return maxSteps
         }
         carry = max(exact - Double(whole), 0)
         isSpeedLimited = false

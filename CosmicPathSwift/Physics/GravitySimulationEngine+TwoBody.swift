@@ -124,18 +124,27 @@ extension GravitySimulationEngine {
             return true
         }
 
-        if !isBlackHoleMode {
-            // Normal mode: trigger a collision when the planet reaches the star's
-            // surface. The surface radius is defined as max(2 rₛ, softening) so it
-            // scales with stellar mass while never falling below the softening length.
-            // For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
-            let starSurface = max(2.0 * rs, Self.softening * 2)
-            if sep <= starSurface {
-                absorbPlanet()
-                return true
-            }
+        if !isBlackHoleMode && sep <= Self.starSurfaceRadius(schwarzschildRadius: rs) {
+            // Normal mode: the planet reached the star's surface.
+            absorbPlanet()
+            return true
         }
         return false
+    }
+
+    /// Radius at which the planet hits the star in normal mode: max(2 rₛ, 2 × softening).
+    /// It scales with stellar mass while never falling below the softening length.
+    /// For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
+    static func starSurfaceRadius(schwarzschildRadius rs: Double) -> Double {
+        max(2.0 * rs, softening * 2)
+    }
+
+    /// Proxy for the planet's physical radius used by the Roche limit (sim-pixels).
+    static let planetProxyRadius: Double = 10.0
+
+    /// Roche limit r = R_planet × (2 M₁ / M₂)^⅓, inside which tides strip the planet.
+    static func rocheLimit(centralMass: Double, planetMass: Double) -> Double {
+        planetProxyRadius * pow(2.0 * centralMass / max(planetMass, 0.1), 1.0 / 3.0)
     }
 
     /// Freezes the planet at the central body's position and flags absorption.
@@ -162,8 +171,7 @@ extension GravitySimulationEngine {
     /// Roche limit grows, creating a runaway stripping effect. When mass drops
     /// to 0.5 % of its initial value the planet is considered fully disrupted.
     private func applyTidalStripping(separation sep: Double, dt: Double) -> Bool {
-        let planetProxyRadius: Double = 10.0
-        let rocheLimit = planetProxyRadius * pow(2.0 * bodies[0].mass / max(bodies[1].mass, 0.1), 1.0 / 3.0)
+        let rocheLimit = Self.rocheLimit(centralMass: bodies[0].mass, planetMass: bodies[1].mass)
         guard sep < rocheLimit else { return false }
 
         let initialMass = twoBodyState.body2InitialMass

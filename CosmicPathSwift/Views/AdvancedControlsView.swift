@@ -22,6 +22,7 @@ struct AdvancedControlsView: View {
         NavigationStack {
             Form {
                 timeSection
+                startingConditionsSection
                 displaySection
                 cameraSection
                 restoreSection
@@ -91,6 +92,115 @@ struct AdvancedControlsView: View {
             Button("Step One Frame") { viewModel.stepFrame() }
                 .disabled(viewModel.isRunning)
         }
+    }
+
+    // MARK: - Starting Conditions
+
+    private var startingConditionsSection: some View {
+        Section {
+            if viewModel.isThreeBodyMode {
+                chaosControls
+                if viewModel.config.threeBodyPreset == .custom {
+                    customLayoutControls
+                }
+            } else {
+                orbitShapeControls
+            }
+        } header: {
+            Text("Starting Conditions")
+        } footer: {
+            Text("Changing these restarts the simulation, so they can only be edited while paused.")
+        }
+        .disabled(viewModel.isRunning)
+    }
+
+    @ViewBuilder
+    private var orbitShapeControls: some View {
+        let initial = $viewModel.config.advanced.initial
+        captionedRow(
+            String(format: "Eccentricity: %.2f", initial.eccentricity.wrappedValue),
+            caption: "Ellipse shape. Distance is the average size a; the planet starts at its closest point, a(1 − e). Higher values make the perihelion precession easier to see."
+        ) {
+            Slider(value: initial.eccentricity, in: InitialConditionSettings.eccentricityRange, step: 0.05)
+            if let warning = viewModel.periapsisWarning {
+                Text(warning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        captionedRow(
+            String(format: "Periapsis Angle: %.0f°", initial.periapsisAngleDeg.wrappedValue),
+            caption: "Which way the ellipse points within the orbital plane."
+        ) {
+            Slider(value: initial.periapsisAngleDeg, in: InitialConditionSettings.periapsisAngleRange, step: 5)
+        }
+    }
+
+    @ViewBuilder
+    private var chaosControls: some View {
+        let initial = $viewModel.config.advanced.initial
+        captionedRow(
+            "Chaos Nudge ε",
+            caption: "Moves body A by ε × the system size. Chaotic systems magnify tiny differences."
+        ) {
+            Picker("Chaos Nudge", selection: initial.chaosEpsilon) {
+                ForEach(InitialConditionSettings.chaosEpsilonChoices, id: \.self) { value in
+                    Text(Self.epsilonLabel(value)).tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        explainedToggle(
+            "Show Unperturbed Twin",
+            isOn: initial.showUnperturbedTwin,
+            caption: "Runs the un-nudged system alongside as a faint ghost, and shows how far apart the two drift."
+        )
+        .disabled(initial.chaosEpsilon.wrappedValue == 0)
+    }
+
+    @ViewBuilder
+    private var customLayoutControls: some View {
+        let initial = $viewModel.config.advanced.initial
+        captionedRow(
+            "Custom Layout",
+            caption: "Triangle is the rotating Lagrange triangle. Random places the bodies from a seed; the same seed always gives the same layout."
+        ) {
+            Picker("Custom Layout", selection: initial.customLayout) {
+                ForEach(CustomLayout.allCases, id: \.self) { layout in
+                    Text(layout.displayName).tag(layout)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        if initial.customLayout.wrappedValue == .random {
+            HStack {
+                Text("Seed")
+                TextField("Seed", value: seedBinding, format: .number)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                Button {
+                    seedBinding.wrappedValue = UInt64.random(in: 1...InitialConditionSettings.maxSeed)
+                } label: {
+                    Image(systemName: "dice")
+                }
+                .accessibilityLabel("New Seed")
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    /// Seed binding clamped to `InitialConditionSettings.maxSeed`.
+    private var seedBinding: Binding<UInt64> {
+        Binding(
+            get: { viewModel.config.advanced.initial.customSeed },
+            set: { viewModel.config.advanced.initial.customSeed = min($0, InitialConditionSettings.maxSeed) }
+        )
+    }
+
+    /// "Off", "10⁻⁸", "10⁻⁶", … for the chaos ε picker.
+    private static func epsilonLabel(_ value: Double) -> String {
+        guard value > 0 else { return "Off" }
+        return "10" + Int(log10(value).rounded()).superscript
     }
 
     // MARK: - Display

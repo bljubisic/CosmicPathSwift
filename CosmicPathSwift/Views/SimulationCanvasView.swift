@@ -94,6 +94,11 @@ struct SimulationCanvasView: View {
                     }
                 }
 
+                // Unperturbed chaos twin, under the main run (3-body, Advanced sheet).
+                if !viewModel.ghostPositions.isEmpty {
+                    ChaosTwinGhostView(viewModel: viewModel)
+                }
+
                 ForEach(viewModel.bodyTrails.indices, id: \.self) { index in
                     trailPath(points: viewModel.bodyTrails[index], color: trailColor(for: index))
                 }
@@ -137,7 +142,9 @@ struct SimulationCanvasView: View {
 
                 formulaOverlay
 
-                if !isThreeBody {
+                if isThreeBody {
+                    ChaosTwinBadge(viewModel: viewModel)
+                } else {
                     HabitableZoneBadge(viewModel: viewModel)
                 }
 

@@ -68,13 +68,40 @@ class SimulationViewModel {
     var systemMetrics = SystemMetrics()
     var config = SimulationConfig() {
         didSet {
-            // Display options only change projection, so re-project at once;
-            // this makes them work while paused as well as while running.
-            if config.advanced.display != oldValue.advanced.display {
+            if config.advanced.initial != oldValue.advanced.initial, isSetup {
+                // Starting conditions only matter at setup, so restart with them
+                // (the sheet only allows editing them while paused).
+                setup(canvasSize: currentCanvasSize)
+            } else if config.advanced.display != oldValue.advanced.display {
+                // Display options only change projection, so re-project at once;
+                // this makes them work while paused as well as while running.
                 syncState()
             }
         }
     }
+
+    /// Warning shown in the Advanced sheet when the eccentricity brings the
+    /// planet's closest approach inside a danger radius (2-body only).
+    var periapsisWarning: String? {
+        InitialConditions.periapsisWarning(config: config)
+    }
+
+    // MARK: - Chaos Twin State
+
+    /// Canvas positions of the unperturbed twin's bodies. Empty without a twin.
+    var ghostPositions: [CGPoint] = []
+
+    /// Canvas trails of the twin's bodies, index-aligned with `ghostPositions`.
+    var ghostTrails: [[CGPoint]] = []
+
+    /// IDs of the twin's bodies (for their palette colours).
+    var ghostIDs: [Int] = []
+
+    /// Largest main-vs-twin body distance in length units; nil without a twin.
+    var twinDivergence: Double?
+
+    /// Simulated time at which the runs diverged, if they have.
+    var twinDivergenceTime: Double?
 
     /// True when the chosen accuracy and speed need more steps per frame than
     /// `TimeSettings.maxStepsPerFrame`, so the simulation runs slower than asked.
@@ -213,6 +240,9 @@ class SimulationViewModel {
     /// Turns the speed and accuracy multipliers into whole steps per frame.
     private var stepPlanner = FrameStepPlanner()
 
+    /// Unperturbed copy of the 3-body system for the chaos experiment, if enabled.
+    private var chaosTwin: ChaosTwin?
+
     /// Tracks the maximum distance any body reaches from the centre of mass, used to
     /// dynamically zoom out so the entire system always fits on screen.
     private var maxExtent: Double = 0
@@ -282,6 +312,7 @@ class SimulationViewModel {
 
         engine = engineFactory(bodies)
         engine?.isBlackHoleMode = config.mode == .twoBody && config.isBlackHoleMode
+        chaosTwin = makeChaosTwin()
         stepPlanner.reset()
         updateSpeedLimited()
         syncState()
@@ -359,7 +390,8 @@ class SimulationViewModel {
     }
 
     /// Returns every Advanced setting to its default ("Restore defaults" in the sheet).
-    /// None of them change the initial conditions, so nothing needs to be re-simulated.
+    /// If the starting conditions were changed, the simulation restarts with the
+    /// standard ones (see `config.didSet`); otherwise the run is left alone.
     func restoreAdvancedDefaults() {
         config.advanced = AdvancedSettings()
     }
@@ -503,8 +535,10 @@ class SimulationViewModel {
 
     /// Steps for the next frame. The multipliers are read every frame, so
     /// changes in the Advanced sheet apply immediately, even while running.
+    /// With a chaos twin, two engines share the frame budget, so each gets half the cap.
     private func planSteps() -> Int {
-        let steps = stepPlanner.steps(baseSteps: config.stepsPerFrame, time: config.advanced.time)
+        let cap = chaosTwin == nil ? TimeSettings.maxStepsPerFrame : TimeSettings.maxStepsPerFrame / 2
+        let steps = stepPlanner.steps(baseSteps: config.stepsPerFrame, time: config.advanced.time, maxSteps: cap)
         updateSpeedLimited()
         return steps
     }
@@ -514,7 +548,39 @@ class SimulationViewModel {
         let dt = effectiveTimeStep
         for _ in 0..<steps {
             engine.step(dt: dt)
+            chaosTwin?.step(dt: dt)
         }
+    }
+
+    /// Builds the unperturbed twin when the chaos experiment is on (3-body, ε > 0).
+    private func makeChaosTwin() -> ChaosTwin? {
+        guard isThreeBodyMode, config.advanced.initial.isTwinActive else { return nil }
+        let preset = config.threeBodyPreset
+        let unperturbed = InitialConditions.threeBody(preset: preset, config: config, applyingNudge: false)
+        let lengthUnit = InitialConditions.units(for: preset, config: config).length
+        return ChaosTwin(engine: engineFactory(unperturbed), lengthUnit: lengthUnit)
+    }
+
+    /// Projects the twin's bodies and trails and refreshes the divergence readout.
+    private func updateChaosTwin(mainBodies: [CelestialBody]) {
+        guard let chaosTwin else {
+            if !ghostPositions.isEmpty || twinDivergence != nil {
+                ghostPositions = []
+                ghostTrails = []
+                ghostIDs = []
+                twinDivergence = nil
+                twinDivergenceTime = nil
+            }
+            return
+        }
+        chaosTwin.measureDivergence(against: mainBodies)
+        let twinBodies = chaosTwin.bodies
+        let trailLimit = config.advanced.display.trailPointLimit
+        ghostPositions = twinBodies.map { transformer.simulationToCanvas($0.position) }
+        ghostTrails = twinBodies.map { transformer.transformTrail(Array($0.trail.suffix(trailLimit))) }
+        ghostIDs = twinBodies.map(\.id)
+        twinDivergence = chaosTwin.relativeDivergence
+        twinDivergenceTime = chaosTwin.divergenceTime
     }
 
     /// Copies the planner's flag, writing only on change to avoid needless view updates.
@@ -538,6 +604,7 @@ class SimulationViewModel {
         }
 
         updateVectorArrows(bodies)
+        updateChaosTwin(mainBodies: bodies)
 
         metrics = engine.metrics
         systemMetrics = engine.systemMetrics

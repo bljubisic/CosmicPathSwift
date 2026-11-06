@@ -601,6 +601,10 @@ struct AdvancedSettings: Equatable, Codable, Sendable {
     /// Time-step and speed multipliers. Applied immediately, even while running,
     /// because they never change the initial conditions.
     var time = TimeSettings()
+
+    /// Starting conditions (orbit shape, chaos nudge, Custom layout). Changing
+    /// these restarts the setup, so they are edited while paused.
+    var initial = InitialConditionSettings()
 }
 
 /// Time and integration options from the Advanced sheet.
