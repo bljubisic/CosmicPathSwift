@@ -16,8 +16,8 @@
 //     to 2D canvas-space positions via `CoordinateTransformer`, which applies
 //     an azimuth rotation and elevation tilt before scaling to canvas coordinates.
 //
-//  3. **Dynamic zoom**: Tracks the farthest body extent each frame and
-//     adjusts the transformer scale so the whole system always fits on screen,
+//  3. **Dynamic zoom**: `ZoomController` tracks the farthest body extent each
+//     frame and the view model adjusts the transformer scale so the whole system always fits on screen,
 //     with gradual zoom-back-in recovery via exponential decay. Ejected bodies
 //     are ignored so the camera stays on the remaining bound system.
 //
@@ -129,7 +129,8 @@ class SimulationViewModel {
         return OrbitalElements.osculating(
             relativePosition: bodies[1].position - bodies[0].position,
             relativeVelocity: bodies[1].velocity - bodies[0].velocity,
-            totalMass: NBodyGravity.totalMass(bodies)
+            totalMass: NBodyGravity.totalMass(bodies),
+            constants: config.scale.constants
         )
     }
 
@@ -141,7 +142,8 @@ class SimulationViewModel {
               let bodies = engine?.bodies else { return nil }
         return PrecessionComparison(
             measuredPerOrbit: metrics.precessionAngle / Double(metrics.orbitsCompleted),
-            totalMass: NBodyGravity.totalMass(bodies), periapsis: periapsis, apoapsis: apoapsis
+            totalMass: NBodyGravity.totalMass(bodies), periapsis: periapsis, apoapsis: apoapsis,
+            constants: config.scale.constants
         )
     }
 
@@ -243,8 +245,8 @@ class SimulationViewModel {
     /// a portrait layout switch (only needs a canvas resize, not engine recreation).
     var isSetup: Bool { engine != nil }
 
-    /// Builds an engine from the initial bodies and the Advanced physics settings.
-    typealias EngineFactory = @Sendable ([CelestialBody], EngineSettings) -> SimulationEngineProtocol
+    /// Builds an engine from the initial bodies, the Advanced physics settings and the scale.
+    typealias EngineFactory = @Sendable (EngineSetup) -> SimulationEngineProtocol
 
     private let engineFactory: EngineFactory
     private var engine: SimulationEngineProtocol?
@@ -258,12 +260,8 @@ class SimulationViewModel {
     /// Unperturbed copy of the 3-body system for the chaos experiment, if enabled.
     private var chaosTwin: ChaosTwin?
 
-    /// Tracks the maximum distance any body reaches from the centre of mass, used to
-    /// dynamically zoom out so the entire system always fits on screen.
-    private var maxExtent: Double = 0
-
-    /// Smallest extent the zoom may shrink to: the initial extent × orbit margin.
-    private var minimumExtent: Double = 0
+    /// Dynamic zoom: the viewed extent and the CoM the view is centred on.
+    private var zoom = ZoomController()
 
     /// Reference mass for `bodyMassMultipliers` in 3-body mode (the preset's mass unit).
     private var massUnit: Double = 1
@@ -274,17 +272,11 @@ class SimulationViewModel {
     /// Longest arrow allowed, in simulation units (the initial view extent).
     private var vectorMaxLength: Double = 0
 
-    /// Instantaneous centre of mass in simulation space, updated every frame.
-    /// Used as the `centerOffset` for the coordinate transformer so the view
-    /// stays centred on the system even when numerical integration causes the
-    /// CoM to drift slightly from the origin over many orbits.
-    private var currentCOM: Vector3D = .zero
-
     // MARK: - Init
 
     init(
-        engineFactory: @escaping EngineFactory = { bodies, settings in
-            GravitySimulationEngine(bodies: bodies, settings: settings)
+        engineFactory: @escaping EngineFactory = { setup in
+            GravitySimulationEngine(bodies: setup.bodies, settings: setup.settings, scale: setup.scale)
         }
     ) {
         self.engineFactory = engineFactory
@@ -315,17 +307,15 @@ class SimulationViewModel {
             massUnit = InitialConditions.units(for: config.threeBodyPreset, config: config).mass
         }
 
-        currentCOM = NBodyGravity.centerOfMass(bodies)
-        let initialExtent = bodies.map { ($0.position - currentCOM).magnitude }.max() ?? CelestialConstants.baseAU
-        minimumExtent = initialExtent * CelestialConstants.orbitMarginFactor
-        maxExtent = minimumExtent
+        let scale = config.scale
+        let initialExtent = zoom.reset(for: bodies, fallbackExtent: scale.au)
         transformer = makeTransformer()
         vectorDynamicalTime = VectorOverlay.dynamicalTime(
-            extent: initialExtent, totalMass: NBodyGravity.totalMass(bodies)
+            extent: initialExtent, totalMass: NBodyGravity.totalMass(bodies), constants: scale.constants
         )
-        vectorMaxLength = minimumExtent
+        vectorMaxLength = zoom.minimumExtent
 
-        engine = engineFactory(bodies, config.advanced.engine)
+        engine = engineFactory(engineSetup(for: bodies))
         engine?.isBlackHoleMode = config.mode == .twoBody && config.isBlackHoleMode
         chaosTwin = makeChaosTwin()
         diagnostics.reset()
@@ -486,11 +476,16 @@ class SimulationViewModel {
     private func makeTransformer() -> CoordinateTransformer {
         CoordinateTransformer(
             canvasSize: currentCanvasSize,
-            simulationSeparation: maxExtent,
+            simulationSeparation: zoom.maxExtent,
             azimuth: cameraAzimuth,
             elevation: cameraElevation,
-            centerOffset: currentCOM
+            centerOffset: zoom.centerOfMass
         )
+    }
+
+    /// Everything the engine factory needs for `bodies` under the current config.
+    private func engineSetup(for bodies: [CelestialBody]) -> EngineSetup {
+        EngineSetup(bodies: bodies, settings: config.advanced.engine, scale: config.scale)
     }
 
     // MARK: - Simulation Loop
@@ -531,7 +526,7 @@ class SimulationViewModel {
         let unperturbed = InitialConditions.threeBody(preset: preset, config: config, applyingNudge: false)
         let lengthUnit = InitialConditions.units(for: preset, config: config).length
         // Same physics settings as the main run, so only the nudge differs.
-        return ChaosTwin(engine: engineFactory(unperturbed, config.advanced.engine), lengthUnit: lengthUnit)
+        return ChaosTwin(engine: engineFactory(engineSetup(for: unperturbed)), lengthUnit: lengthUnit)
     }
 
     /// Projects the twin's bodies and trails and refreshes the divergence readout.
@@ -622,7 +617,7 @@ class SimulationViewModel {
         if let zone = habitableZone, bodies.count >= 2 {
             projection = .project(
                 zone: zone, star: bodies[0], planet: bodies[1], transformer: transformer,
-                maxExtent: maxExtent, isAbsorbed: metrics.isAbsorbed,
+                maxExtent: zoom.maxExtent, isAbsorbed: metrics.isAbsorbed,
                 albedo: config.advanced.habitableZone.bondAlbedo
             )
         } else {
@@ -635,51 +630,18 @@ class SimulationViewModel {
         isHabitableZoneOffScreen = projection.isOffScreen
     }
 
-    /// Re-centres on the CoM and adjusts zoom so every tracked body fits.
-    ///
-    /// ## Dynamic Zoom
-    ///
-    /// Tracks the farthest any tracked body reaches from the CoM. Zooms out
-    /// instantly if a body exceeds the current extent; zooms back in gradually via
-    /// exponential decay after brief excursions. An ejected body is not tracked
-    /// (neither for the CoM nor the extent), so the camera stays on the remaining
-    /// bound system instead of zooming out forever. The transformer is only rebuilt
+    /// Re-centres on the CoM and adjusts zoom so every tracked body fits (see
+    /// `ZoomController`). With Lock Zoom on (Advanced sheet) the scale stays
+    /// fixed; the view still follows the CoM. The transformer is only rebuilt
     /// when the extent or CoM actually changes.
-    ///
-    /// With Lock Zoom on (Advanced sheet) the extent is left as it is, so the scale
-    /// stays fixed; the view still follows the CoM.
     private func updateZoom(for bodies: [CelestialBody]) {
         let ejectedID = engine?.systemMetrics.ejectedBodyID
-        let tracked = bodies.filter { $0.id != ejectedID || bodies.count == 1 }
-
-        // Measuring extents from the instantaneous CoM rather than the fixed origin
-        // prevents the zoom from ratcheting outward as the CoM slowly drifts.
-        let previousCOM = currentCOM
-        currentCOM = NBodyGravity.centerOfMass(tracked)
-        let currentMax = tracked.map { ($0.position - currentCOM).magnitude }.max() ?? 0
-
-        // 15% headroom around the farthest body so none sits at the canvas edge.
-        let targetExtent = max(currentMax * 1.15, minimumExtent)
-        let previousExtent = maxExtent
-
-        if config.advanced.display.lockZoom {
-            // Keep the current extent.
-        } else if targetExtent > maxExtent {
-            // Zoom out immediately so bodies are never clipped off-screen.
-            maxExtent = targetExtent
-        } else {
-            // Zoom in at different rates depending on state:
-            //   • Active orbit: 0.999/frame ≈ 6% oscillation for a 2-second eccentric orbit.
-            //     Slow recovery (~13 s to halve) keeps the view stable rather than "bouncing"
-            //     as the planet oscillates between perihelion and aphelion.
-            //   • After absorption or ejection: 0.96/frame recovers in < 0.5 s once the
-            //     body is gone, so the canvas snaps back rather than staying zoomed out.
-            let bodyLeft = metrics.isAbsorbed || ejectedID != nil
-            let decayRate = bodyLeft ? 0.96 : 0.999
-            maxExtent = max(targetExtent, maxExtent * decayRate)
-        }
-
-        if maxExtent != previousExtent || currentCOM != previousCOM {
+        let changed = zoom.update(
+            bodies: bodies, ejectedID: ejectedID,
+            bodyLeft: metrics.isAbsorbed || ejectedID != nil,
+            lockZoom: config.advanced.display.lockZoom
+        )
+        if changed {
             transformer = makeTransformer()
         }
     }

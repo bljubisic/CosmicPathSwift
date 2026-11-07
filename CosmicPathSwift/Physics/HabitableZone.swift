@@ -9,8 +9,8 @@
 //
 //  All physical quantities are expressed in the units shown on the sliders
 //  (M☉, AU, L☉) rather than the compressed simulation constants, so the zone
-//  stays consistent with what the user sees. Convert to simulation pixels with
-//  `CelestialConstants.baseAU`.
+//  stays consistent with what the user sees. `simulationAU` converts them to
+//  simulation units (the scale's 1 AU).
 //
 
 import Foundation
@@ -42,18 +42,25 @@ struct HabitableZone: Equatable, Sendable {
     let innerAU: Double
     /// Outer (cold) edge in AU.
     let outerAU: Double
+    /// Length of 1 AU in simulation units (from the scale profile).
+    let simulationAU: Double
 
-    init(luminosity: Double, limits: HabitableZoneLimits = .conservative) {
+    init(
+        luminosity: Double,
+        limits: HabitableZoneLimits = .conservative,
+        simulationAU: Double = ScaleProfile.visual.au
+    ) {
         self.luminosity = luminosity
+        self.simulationAU = simulationAU
         self.innerAU = HabitableZonePhysics.distanceAU(luminosity: luminosity, flux: limits.innerFlux)
         self.outerAU = HabitableZonePhysics.distanceAU(luminosity: luminosity, flux: limits.outerFlux)
     }
 
-    /// Inner edge in simulation pixels.
-    var innerPx: Double { innerAU * CelestialConstants.baseAU }
+    /// Inner edge in simulation units (pixels in the Visual scale).
+    var innerPx: Double { innerAU * simulationAU }
 
-    /// Outer edge in simulation pixels.
-    var outerPx: Double { outerAU * CelestialConstants.baseAU }
+    /// Outer edge in simulation units (pixels in the Visual scale).
+    var outerPx: Double { outerAU * simulationAU }
 
     /// Classifies a planet at `distanceAU` from the central body.
     func status(atDistanceAU distanceAU: Double) -> HabitableStatus {
@@ -70,7 +77,9 @@ struct HabitableZone: Equatable, Sendable {
         let luminosity = config.isBlackHoleMode
             ? HabitableZonePhysics.blackHoleLuminosity(solarMasses: mass, eddingtonFraction: config.accretionEddingtonFraction)
             : HabitableZonePhysics.starLuminosity(solarMasses: mass)
-        return HabitableZone(luminosity: luminosity, limits: config.advanced.habitableZone.limits)
+        return HabitableZone(
+            luminosity: luminosity, limits: config.advanced.habitableZone.limits, simulationAU: config.scale.au
+        )
     }
 }
 

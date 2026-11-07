@@ -62,19 +62,19 @@ extension GravitySimulationEngine {
         /// internal L), excluded from the drift metric.
         var mergeAngularMomentumChange: Vector3D = .zero
 
-        init(bodies: [CelestialBody], softening: Double) {
+        init(bodies: [CelestialBody], softening: Double, constants: PhysicalConstants = .visual) {
             let com = NBodyGravity.centerOfMass(bodies)
             let extent = bodies.map { ($0.position - com).magnitude }.max() ?? 0
             let mass = NBodyGravity.totalMass(bodies)
-            initialEnergy = NBodyGravity.newtonianEnergy(bodies, softening: softening)
+            initialEnergy = NBodyGravity.newtonianEnergy(bodies, softening: softening, constants: constants)
             initialExtent = extent
             initialAngularMomentum = NBodyGravity.angularMomentum(bodies)
             angularMomentumScale = Self.angularMomentumScale(
-                initial: initialAngularMomentum.magnitude, mass: mass, extent: extent
+                initial: initialAngularMomentum.magnitude, mass: mass, extent: extent, G: constants.G
             )
 
             if extent > 0 && mass > 0 {
-                let dynamicalTime = sqrt(extent * extent * extent / (GravitySimulationEngine.G * mass))
+                let dynamicalTime = sqrt(extent * extent * extent / (constants.G * mass))
                 trailSampleInterval = dynamicalTime / GravitySimulationEngine.trailSamplesPerDynamicalTime
             } else {
                 trailSampleInterval = 0
@@ -84,8 +84,8 @@ extension GravitySimulationEngine {
 
         /// |L₀| unless it is negligible next to the characteristic M·√(GMR),
         /// which is used instead (figure-eight and Pythagorean have L₀ = 0).
-        private static func angularMomentumScale(initial: Double, mass: Double, extent: Double) -> Double {
-            let characteristic = mass * sqrt(GravitySimulationEngine.G * mass * extent)
+        private static func angularMomentumScale(initial: Double, mass: Double, extent: Double, G: Double) -> Double {
+            let characteristic = mass * sqrt(G * mass * extent)
             return initial > 1e-6 * characteristic ? initial : characteristic
         }
     }
@@ -108,15 +108,14 @@ extension GravitySimulationEngine {
 
     // MARK: - Collisions
 
-    /// Distance at which two bodies merge: max(2rₛᵢ, 2rₛⱼ, 2·softening).
+    /// Distance at which two bodies merge in `scale` (Visual: max(2rₛᵢ, 2rₛⱼ, 2·softening)).
     static func collisionDistance(
         _ a: CelestialBody,
         _ b: CelestialBody,
-        softening: Double = GravitySimulationEngine.softening
+        softening: Double = GravitySimulationEngine.softening,
+        scale: ScaleProfile = .visual
     ) -> Double {
-        let rsA = 2.0 * G * a.mass / cSquared
-        let rsB = 2.0 * G * b.mass / cSquared
-        return max(2.0 * rsA, 2.0 * rsB, 2.0 * softening)
+        scale.collisionDistance(massA: a.mass, massB: b.mass, softening: softening)
     }
 
     /// Merges the first colliding pair found (at most one merge per step).
@@ -124,7 +123,7 @@ extension GravitySimulationEngine {
         for i in bodies.indices {
             for j in bodies.indices where j > i {
                 let distance = (bodies[i].position - bodies[j].position).magnitude
-                if distance <= Self.collisionDistance(bodies[i], bodies[j], softening: softeningLength) {
+                if distance <= Self.collisionDistance(bodies[i], bodies[j], softening: softeningLength, scale: scale) {
                     merge(i, j)
                     return
                 }
@@ -134,7 +133,7 @@ extension GravitySimulationEngine {
 
     /// Replaces bodies i and j with a single inelastically merged body.
     private func merge(_ i: Int, _ j: Int) {
-        let energyBefore = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength)
+        let energyBefore = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength, constants: constants)
         let angularMomentumBefore = NBodyGravity.angularMomentum(bodies)
         let (survivorIndex, absorbedIndex) = bodies[i].mass >= bodies[j].mass ? (i, j) : (j, i)
         let survivor = bodies[survivorIndex]
@@ -149,9 +148,11 @@ extension GravitySimulationEngine {
         var remaining = bodies
         remaining[survivorIndex] = merged
         remaining.remove(at: absorbedIndex)
-        bodies = NBodyGravity.withAccelerations(remaining, softening: softeningLength)
+        bodies = NBodyGravity.withAccelerations(remaining, softening: softeningLength, constants: constants)
 
-        nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - energyBefore
+        nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(
+            bodies, softening: softeningLength, constants: constants
+        ) - energyBefore
         nBodyState.mergeAngularMomentumChange = nBodyState.mergeAngularMomentumChange
             + NBodyGravity.angularMomentum(bodies) - angularMomentumBefore
         systemMetrics.collision = (survivor.id, absorbed.id)
@@ -184,7 +185,7 @@ extension GravitySimulationEngine {
 
             let othersVelocity = NBodyGravity.totalMomentum(others) * (1.0 / othersMass)
             let relativeSpeed = (bodies[i].velocity - othersVelocity).magnitude
-            let specificEnergy = 0.5 * relativeSpeed * relativeSpeed - Self.G * othersMass / distance
+            let specificEnergy = 0.5 * relativeSpeed * relativeSpeed - constants.G * othersMass / distance
             if specificEnergy > 0 {
                 systemMetrics.ejectedBodyID = bodies[i].id
                 return
@@ -198,7 +199,8 @@ extension GravitySimulationEngine {
     func updateSystemMetrics() {
         let initialEnergy = nBodyState.initialEnergy
         if initialEnergy != 0 {
-            let energy = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - nBodyState.mergeEnergyChange
+            let energy = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength, constants: constants)
+                - nBodyState.mergeEnergyChange
             systemMetrics.energyDrift = (energy - initialEnergy) / abs(initialEnergy)
         }
         if nBodyState.angularMomentumScale > 0 {
@@ -208,7 +210,7 @@ extension GravitySimulationEngine {
         }
 
         for i in bodies.indices {
-            let speedFraction = bodies[i].velocity.magnitude / Self.c
+            let speedFraction = bodies[i].velocity.magnitude / constants.c
             systemMetrics.maxVelocityFractionOfC = max(systemMetrics.maxVelocityFractionOfC, speedFraction)
             for j in bodies.indices where j > i {
                 let distance = (bodies[i].position - bodies[j].position).magnitude

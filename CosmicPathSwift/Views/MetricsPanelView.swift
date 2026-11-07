@@ -104,7 +104,7 @@ struct MetricsPanelView: View {
             // Normal mode → Lorentz factor γ = 1/√(1 - v²/c²)
             if viewModel.metrics.isBlackHole {
                 metricItem(
-                    label: "r\u{209B} (px)",
+                    label: "r\u{209B} (\(viewModel.config.scale.units.lengthSymbol))",
                     value: String(format: "%.1f", viewModel.metrics.schwarzschildRadius),
                     color: .red
                 )

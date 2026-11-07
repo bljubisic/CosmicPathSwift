@@ -422,18 +422,18 @@ enum CelestialConstants {
 
     /// Base simulation mass for 1 M☉.
     /// With G=500, c²=40000: this gives rₛ = 2×500×200/40000 = 5 pixels.
-    static let baseSolarMass: Double = 200.0
+    static let baseSolarMass: Double = ScaleProfile.visual.solarMass
 
     /// Base simulation mass for 1 M⊕.
     /// Compressed ratio (200:5 = 40:1 vs. real 333,000:1) so that Earth
     /// is visible and its gravitational back-reaction on the star is noticeable.
-    static let baseEarthMass: Double = 5.0
+    static let baseEarthMass: Double = ScaleProfile.visual.earthMass
 
     /// 1 AU in simulation pixels.
     /// This is the reference orbital separation for a 1 M☉ + 1 M⊕ system.
     /// At this distance with mass=200, rₛ/r = 5/150 ≈ 0.033, giving
     /// measurable but not extreme relativistic effects.
-    static let baseAU: Double = 150.0
+    static let baseAU: Double = ScaleProfile.visual.au
 
     /// Extra margin factor applied to the initial orbital separation when setting
     /// up the coordinate transformer. Ensures the full orbit (which may be eccentric)
@@ -445,7 +445,7 @@ enum CelestialConstants {
     /// well above the visual threshold of 8 pixels. This makes the
     /// event horizon, photon sphere (188 px), and ISCO (375 px)
     /// clearly visible on screen.
-    static let blackHoleSolarMass: Double = 5000.0
+    static let blackHoleSolarMass: Double = ScaleProfile.visual.blackHoleBaseMass
 }
 
 // MARK: - SimulationConfig
@@ -532,22 +532,26 @@ struct SimulationConfig: Equatable {
 
     // MARK: - Derived Simulation Values
 
+    /// Physics scale the simulation runs in: constants, slider-unit conversions
+    /// and size rules. Always Visual until the Realistic scale exists (issue #21).
+    var scale: ScaleProfile { .visual }
+
     /// The simulation mass for body 1 (central body).
     var simulationMass1: Double {
         if isBlackHoleMode {
-            return CelestialConstants.blackHoleSolarMass * mass1Multiplier
+            return scale.blackHoleBaseMass * mass1Multiplier
         }
-        return CelestialConstants.baseSolarMass * mass1Multiplier
+        return scale.solarMass * mass1Multiplier
     }
 
     /// The simulation mass for body 2 (orbiting body).
     var simulationMass2: Double {
-        return CelestialConstants.baseEarthMass * mass2Multiplier
+        return scale.earthMass * mass2Multiplier
     }
 
-    /// The simulation separation in pixels.
+    /// The simulation separation in the scale's length unit.
     var simulationSeparation: Double {
-        return CelestialConstants.baseAU * separationAU
+        return scale.au * separationAU
     }
 
     /// Orbital inclination converted to radians for physics calculations.

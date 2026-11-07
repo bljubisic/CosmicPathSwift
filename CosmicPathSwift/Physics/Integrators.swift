@@ -52,26 +52,47 @@ extension IntegratorKind {
         _ bodies: [CelestialBody],
         dt: Double,
         softening: Double,
-        grEnabled: Bool = true
+        grEnabled: Bool = true,
+        constants: PhysicalConstants = NBodyGravity.defaultConstants
     ) -> [CelestialBody] {
+        let force = ForceModel(softening: softening, grEnabled: grEnabled, constants: constants)
         switch self {
         case .velocityVerlet:
-            return NBodyGravity.verletStep(bodies, dt: dt, softening: softening, grEnabled: grEnabled)
+            return force.verletStep(bodies, dt: dt)
         case .rk4:
-            return Self.rk4Step(bodies, dt: dt, softening: softening, grEnabled: grEnabled)
+            return Self.rk4Step(bodies, dt: dt, force: force)
         case .yoshida4:
-            return Self.yoshidaStep(bodies, dt: dt, softening: softening, grEnabled: grEnabled)
+            return Self.yoshidaStep(bodies, dt: dt, force: force)
+        }
+    }
+
+    // MARK: - Force Model
+
+    /// The force-law options shared by every stage of a step.
+    private struct ForceModel {
+        let softening: Double
+        let grEnabled: Bool
+        let constants: PhysicalConstants
+
+        func accelerations(of bodies: [CelestialBody]) -> [Vector3D] {
+            NBodyGravity.accelerations(of: bodies, softening: softening, grEnabled: grEnabled, constants: constants)
+        }
+
+        func withAccelerations(_ bodies: [CelestialBody]) -> [CelestialBody] {
+            NBodyGravity.withAccelerations(bodies, softening: softening, grEnabled: grEnabled, constants: constants)
+        }
+
+        func verletStep(_ bodies: [CelestialBody], dt: Double) -> [CelestialBody] {
+            NBodyGravity.verletStep(bodies, dt: dt, softening: softening, grEnabled: grEnabled, constants: constants)
         }
     }
 
     // MARK: - Yoshida
 
-    private static func yoshidaStep(
-        _ bodies: [CelestialBody], dt: Double, softening: Double, grEnabled: Bool
-    ) -> [CelestialBody] {
+    private static func yoshidaStep(_ bodies: [CelestialBody], dt: Double, force: ForceModel) -> [CelestialBody] {
         let weights = yoshidaWeights
         return [weights.outer, weights.middle, weights.outer].reduce(bodies) { state, weight in
-            NBodyGravity.verletStep(state, dt: dt * weight, softening: softening, grEnabled: grEnabled)
+            force.verletStep(state, dt: dt * weight)
         }
     }
 
@@ -83,14 +104,9 @@ extension IntegratorKind {
         let accelerations: [Vector3D]
     }
 
-    private static func rk4Step(
-        _ bodies: [CelestialBody], dt: Double, softening: Double, grEnabled: Bool
-    ) -> [CelestialBody] {
+    private static func rk4Step(_ bodies: [CelestialBody], dt: Double, force: ForceModel) -> [CelestialBody] {
         let evaluate = { (stage: [CelestialBody]) in
-            Derivative(
-                velocities: stage.map(\.velocity),
-                accelerations: NBodyGravity.accelerations(of: stage, softening: softening, grEnabled: grEnabled)
-            )
+            Derivative(velocities: stage.map(\.velocity), accelerations: force.accelerations(of: stage))
         }
         let k1 = Derivative(velocities: bodies.map(\.velocity), accelerations: bodies.map(\.acceleration))
         let k2 = evaluate(advanced(bodies, by: k1, dt: dt / 2))
@@ -102,7 +118,7 @@ extension IntegratorKind {
             accelerations: weightedSum(k1.accelerations, k2.accelerations, k3.accelerations, k4.accelerations)
         )
         let final = advanced(bodies, by: combined, dt: dt)
-        return NBodyGravity.withAccelerations(final, softening: softening, grEnabled: grEnabled)
+        return force.withAccelerations(final)
     }
 
     /// Copies of `bodies` moved along `derivative` for time `dt` (x + dt·ẋ, v + dt·v̇).

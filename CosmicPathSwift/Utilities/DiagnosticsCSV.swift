@@ -4,7 +4,7 @@
 //
 //  CSV export of the recorded run (issue #20, PR 6). `#` comment lines
 //  describe the configuration, then one row per body per sample. All values
-//  are in simulation units (G = 500, c = 200, 1 AU = 150 px).
+//  are in the scale's simulation units (Visual: G = 500, c = 200, 1 AU = 150 px).
 //
 
 import CoreTransferable
@@ -52,10 +52,10 @@ enum DiagnosticsCSV {
             ("time_step", number(config.timeStep)),
             ("dt_multiplier", number(config.advanced.time.timeStepMultiplier)),
             ("integrator", engine.integrator.rawValue),
-            ("softening_px", number(engine.softening)),
+            ("softening_\(config.scale.units.lengthSymbol)", number(engine.softening)),
             ("collision_mode", engine.collisionMode.rawValue)
         ]
-        return ["# CosmicPath diagnostics", "# units: simulation (G = 500, c = 200, 1 AU = 150 px)"]
+        return ["# CosmicPath diagnostics", "# units: \(config.scale.unitsDescription)"]
             + fields.map { "# \($0.0): \($0.1)" }
     }
 

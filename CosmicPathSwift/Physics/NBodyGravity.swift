@@ -31,10 +31,10 @@ import Foundation
 
 enum NBodyGravity {
 
-    private static var G: Double { GravitySimulationEngine.G }
-    private static var cSquared: Double { GravitySimulationEngine.cSquared }
     /// Default softening length, used when a caller doesn't pass its own.
-    static var defaultSoftening: Double { GravitySimulationEngine.softening }
+    static var defaultSoftening: Double { ScaleProfile.visual.defaultSoftening }
+    /// Default constants (the Visual scale), used when a caller doesn't pass its own.
+    static var defaultConstants: PhysicalConstants { ScaleProfile.visual.constants }
 
     // MARK: - Accelerations
 
@@ -50,25 +50,27 @@ enum NBodyGravity {
     ///   - relativeVelocity: Body velocity minus source velocity.
     ///   - softening: Smallest distance used, so the force stays finite as r → 0.
     ///   - grEnabled: When false, returns pure Newtonian gravity (tests only).
+    ///   - constants: G and c of the physics scale.
     /// - Returns: Acceleration vector pointing toward the source.
     static func pairAcceleration(
         sourceMass: Double,
         separation: Vector3D,
         relativeVelocity: Vector3D,
         softening: Double = defaultSoftening,
-        grEnabled: Bool = true
+        grEnabled: Bool = true,
+        constants: PhysicalConstants = defaultConstants
     ) -> Vector3D {
         // Clamp to the softening length to prevent divergence as r → 0.
         let dist = max(separation.magnitude, softening)
         let r2 = dist * dist
-        let gm = G * sourceMass
+        let gm = constants.G * sourceMass
 
         let aNewton = -gm / r2
         var aGR = 0.0
         if grEnabled {
             // Specific angular momentum of the pair: L = |r × v_rel|.
             let angularMomentum = separation.cross(relativeVelocity).magnitude
-            aGR = -3.0 * gm * angularMomentum * angularMomentum / (cSquared * r2 * r2)
+            aGR = -3.0 * gm * angularMomentum * angularMomentum / (constants.cSquared * r2 * r2)
         }
         // Both terms are negative (inward); multiplying by outward r̂ points to the source.
         return (aNewton + aGR) * separation.normalized
@@ -78,7 +80,8 @@ enum NBodyGravity {
     static func accelerations(
         of bodies: [CelestialBody],
         softening: Double = defaultSoftening,
-        grEnabled: Bool = true
+        grEnabled: Bool = true,
+        constants: PhysicalConstants = defaultConstants
     ) -> [Vector3D] {
         bodies.indices.map { i in
             bodies.indices.reduce(Vector3D.zero) { total, j in
@@ -88,7 +91,8 @@ enum NBodyGravity {
                     separation: bodies[i].position - bodies[j].position,
                     relativeVelocity: bodies[i].velocity - bodies[j].velocity,
                     softening: softening,
-                    grEnabled: grEnabled
+                    grEnabled: grEnabled,
+                    constants: constants
                 )
             }
         }
@@ -98,9 +102,11 @@ enum NBodyGravity {
     static func withAccelerations(
         _ bodies: [CelestialBody],
         softening: Double = defaultSoftening,
-        grEnabled: Bool = true
+        grEnabled: Bool = true,
+        constants: PhysicalConstants = defaultConstants
     ) -> [CelestialBody] {
-        zip(bodies, accelerations(of: bodies, softening: softening, grEnabled: grEnabled)).map { body, acc in
+        let accelerations = accelerations(of: bodies, softening: softening, grEnabled: grEnabled, constants: constants)
+        return zip(bodies, accelerations).map { body, acc in
             var updated = body
             updated.acceleration = acc
             return updated
@@ -124,14 +130,17 @@ enum NBodyGravity {
         _ bodies: [CelestialBody],
         dt: Double,
         softening: Double = defaultSoftening,
-        grEnabled: Bool = true
+        grEnabled: Bool = true,
+        constants: PhysicalConstants = defaultConstants
     ) -> [CelestialBody] {
         let drifted = bodies.map { body -> CelestialBody in
             var moved = body
             moved.position = body.position + body.velocity * dt + 0.5 * body.acceleration * (dt * dt)
             return moved
         }
-        let newAccelerations = accelerations(of: drifted, softening: softening, grEnabled: grEnabled)
+        let newAccelerations = accelerations(
+            of: drifted, softening: softening, grEnabled: grEnabled, constants: constants
+        )
         return zip(drifted, newAccelerations).map { body, newAcc in
             var kicked = body
             kicked.velocity = body.velocity + 0.5 * (body.acceleration + newAcc) * dt
@@ -160,13 +169,17 @@ enum NBodyGravity {
     }
 
     /// Newtonian total energy: Σ ½mᵢvᵢ² − Σᵢ<ⱼ Gmᵢmⱼ / max(rᵢⱼ, softening).
-    static func newtonianEnergy(_ bodies: [CelestialBody], softening: Double = defaultSoftening) -> Double {
+    static func newtonianEnergy(
+        _ bodies: [CelestialBody],
+        softening: Double = defaultSoftening,
+        constants: PhysicalConstants = defaultConstants
+    ) -> Double {
         let kinetic = bodies.reduce(0.0) { $0 + 0.5 * $1.mass * $1.velocity.magnitudeSquared }
         var potential = 0.0
         for i in bodies.indices {
             for j in bodies.indices where j > i {
                 let dist = max((bodies[i].position - bodies[j].position).magnitude, softening)
-                potential -= G * bodies[i].mass * bodies[j].mass / dist
+                potential -= constants.G * bodies[i].mass * bodies[j].mass / dist
             }
         }
         return kinetic + potential

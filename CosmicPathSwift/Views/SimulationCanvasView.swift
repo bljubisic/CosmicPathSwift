@@ -331,9 +331,10 @@ struct SimulationCanvasView: View {
         let positions = viewModel.bodyPositions
         let masses = viewModel.bodyMasses
         let scale = CGFloat(viewModel.coordinateScale)
+        let constants = viewModel.config.scale.constants
         return Canvas { context, _ in
             for index in positions.indices where masses.indices.contains(index) {
-                let rs = CGFloat(2 * GravitySimulationEngine.G * masses[index] / GravitySimulationEngine.cSquared) * scale
+                let rs = CGFloat(constants.schwarzschildRadius(mass: masses[index])) * scale
                 guard rs >= 0.5 else { continue }
                 let rect = CGRect(x: positions[index].x - rs, y: positions[index].y - rs, width: rs * 2, height: rs * 2)
                 context.stroke(Path(ellipseIn: rect), with: .color(.red.opacity(0.3)),
@@ -583,7 +584,7 @@ struct SimulationCanvasView: View {
     private var zoomSizeScale: CGFloat {
         // coordinateScale is inversely proportional to the viewed extent.
         // Compute the reference scale at default 1 AU separation.
-        let referenceExtent = CelestialConstants.baseAU * CelestialConstants.orbitMarginFactor
+        let referenceExtent = viewModel.config.scale.au * CelestialConstants.orbitMarginFactor
         let minDim = max(min(canvasSize.width, canvasSize.height), 1) // guard against zero
         let halfCanvas = minDim * 0.40
         let referenceScale = halfCanvas / referenceExtent

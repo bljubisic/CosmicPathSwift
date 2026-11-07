@@ -115,6 +115,19 @@ extension SimulationEngineProtocol {
     var body2: CelestialBody { bodies[min(1, bodies.count - 1)] }
 }
 
+// MARK: - EngineSetup
+
+/// Everything needed to build an engine. One value, so adding an input later
+/// doesn't change the shape of `SimulationViewModel.EngineFactory`.
+struct EngineSetup {
+    /// Initial bodies in simulation units.
+    let bodies: [CelestialBody]
+    /// Integrator, softening and collision mode from the Advanced sheet.
+    let settings: EngineSettings
+    /// Constants, units and size rules of the physics scale.
+    let scale: ScaleProfile
+}
+
 // MARK: - GravitySimulationEngine
 
 /// Production simulation engine using Schwarzschild-corrected gravity for every pair.
@@ -133,28 +146,26 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
 
     // MARK: - Physics Constants
     //
-    // These constants are scaled for visual simulation dynamics, not SI units.
-    // The ratios between them (e.g., G/c²) determine the strength of GR effects.
-    // With G=500 and c=200: rₛ = 2GM/c² = M/40, so a mass of 200 gives rₛ=5.
-    // This makes relativistic effects visible at simulation-scale distances.
+    // Each engine reads its constants from `scale` (issue #21). These statics
+    // are aliases of `ScaleProfile.visual`, the original scaled constants, for
+    // code and tests written before scales existed. With G=500 and c=200:
+    // rₛ = 2GM/c² = M/40, so a mass of 200 gives rₛ=5.
 
-    /// Gravitational constant (simulation units, not SI 6.674×10⁻¹¹ m³/kg·s²)
-    static let G: Double = 500.0
+    /// Gravitational constant of the Visual scale.
+    static let G: Double = ScaleProfile.visual.constants.G
 
-    /// Speed of light (simulation units, not SI 3×10⁸ m/s)
-    static let c: Double = 200.0
+    /// Speed of light of the Visual scale.
+    static let c: Double = ScaleProfile.visual.constants.c
 
-    /// c² precomputed for efficiency in metric calculations
-    static let cSquared: Double = c * c  // 40,000
+    /// c² of the Visual scale.
+    static let cSquared: Double = ScaleProfile.visual.constants.cSquared  // 40,000
 
-    /// Default softening length to prevent numerical divergence at r→0.
-    /// Acts as a minimum effective distance in force calculations. Each engine
-    /// uses `settings.effectiveSoftening`, which the Advanced sheet can change.
-    static let softening: Double = 5.0
+    /// Default softening length of the Visual scale. Each engine uses
+    /// `settings.effectiveSoftening`, which the Advanced sheet can change.
+    static let softening: Double = ScaleProfile.visual.defaultSoftening
 
-    /// Visual threshold for black hole classification.
-    /// Body1 is rendered as a black hole when its Schwarzschild radius
-    /// exceeds this value in simulation-space pixels.
+    /// Visual-scale threshold for black hole classification: body1 is a black
+    /// hole when its Schwarzschild radius is at least this many pixels.
     static let blackHoleThreshold: Double = 8.0
 
     // MARK: - State
@@ -186,18 +197,25 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
     /// Integrator, softening, and collision mode, fixed for the engine's lifetime.
     let settings: EngineSettings
 
+    /// Constants, units and size rules of the physics scale, fixed for the engine's lifetime.
+    let scale: ScaleProfile
+
+    /// G and c of `scale`.
+    var constants: PhysicalConstants { scale.constants }
+
     /// Softening length used everywhere in this engine (never below the safety floor).
     var softeningLength: Double { settings.effectiveSoftening }
 
     /// - Precondition: `bodies` must not be empty.
-    init(bodies: [CelestialBody], settings: EngineSettings = EngineSettings()) {
+    init(bodies: [CelestialBody], settings: EngineSettings = EngineSettings(), scale: ScaleProfile = .visual) {
         precondition(!bodies.isEmpty, "GravitySimulationEngine needs at least one body")
         let softening = settings.effectiveSoftening
-        let initial = NBodyGravity.withAccelerations(bodies, softening: softening)
+        let initial = NBodyGravity.withAccelerations(bodies, softening: softening, constants: scale.constants)
         self.bodies = initial
         self.settings = settings
+        self.scale = scale
         self.isTwoBodyScenario = initial.count == 2
-        self.nBodyState = NBodyState(bodies: initial, softening: softening)
+        self.nBodyState = NBodyState(bodies: initial, softening: softening, constants: scale.constants)
 
         if isTwoBodyScenario {
             twoBodyState.body2InitialMass = initial[1].mass
@@ -240,6 +258,6 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
 
     /// Integrator update of every body (shared by both scenarios).
     func integrate(dt: Double) {
-        bodies = settings.integrator.step(bodies, dt: dt, softening: softeningLength)
+        bodies = settings.integrator.step(bodies, dt: dt, softening: softeningLength, constants: constants)
     }
 }

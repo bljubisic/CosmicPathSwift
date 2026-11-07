@@ -90,7 +90,7 @@ extension GravitySimulationEngine {
         twoBodyState.elapsedTime += dt
 
         // Separation uses the full 3D distance so inclined orbits are handled correctly.
-        let rs = 2.0 * Self.G * bodies[0].mass / Self.cSquared
+        let rs = constants.schwarzschildRadius(mass: bodies[0].mass)
         let sep = (bodies[1].position - bodies[0].position).magnitude
 
         if checkAbsorption(schwarzschildRadius: rs, separation: sep) { return }
@@ -135,13 +135,13 @@ extension GravitySimulationEngine {
     /// Ends the simulation if the planet crossed the event horizon (BH mode) or
     /// hit the star's surface (normal mode). Returns true if absorbed.
     private func checkAbsorption(schwarzschildRadius rs: Double, separation sep: Double) -> Bool {
-        if isBlackHoleMode && rs >= Self.blackHoleThreshold && sep <= rs {
+        if isCentralBlackHole(schwarzschildRadius: rs) && sep <= rs {
             // BH mode: planet crossed the event horizon — absorbed.
             absorbPlanet()
             return true
         }
 
-        if !isBlackHoleMode && sep <= Self.starSurfaceRadius(schwarzschildRadius: rs, softening: softeningLength) {
+        if !isBlackHoleMode && sep <= scale.starSurfaceRadius(mass: bodies[0].mass, softening: softeningLength) {
             // Normal mode: the planet reached the star's surface.
             absorbPlanet()
             return true
@@ -149,22 +149,28 @@ extension GravitySimulationEngine {
         return false
     }
 
-    /// Radius at which the planet hits the star in normal mode: max(2 rₛ, 2 × softening).
+    /// True when body1 counts as a black hole under the scale's rule.
+    func isCentralBlackHole(schwarzschildRadius rs: Double) -> Bool {
+        scale.blackHoleRule.isBlackHole(schwarzschildRadius: rs, isBlackHoleMode: isBlackHoleMode)
+    }
+
+    /// Visual-scale radius at which the planet hits the star: max(2 rₛ, 2 × softening).
     /// It scales with stellar mass while never falling below the softening length.
     /// For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
+    /// Engines use their own `scale.starSurfaceRadius`.
     static func starSurfaceRadius(
         schwarzschildRadius rs: Double,
         softening: Double = GravitySimulationEngine.softening
     ) -> Double {
-        max(2.0 * rs, softening * 2)
+        ScaleProfile.visual.starRadius.radius(mass: 0, schwarzschildRadius: rs, softening: softening)
     }
 
-    /// Proxy for the planet's physical radius used by the Roche limit (sim-pixels).
-    static let planetProxyRadius: Double = 10.0
+    /// Proxy for the planet's physical radius used by the Visual Roche limit (sim-pixels).
+    static let planetProxyRadius: Double = ScaleProfile.visual.planetRadius.radius(planetMass: 1)
 
-    /// Roche limit r = R_planet × (2 M₁ / M₂)^⅓, inside which tides strip the planet.
+    /// Visual-scale Roche limit r = R_planet × (2 M₁ / M₂)^⅓ (see `ScaleProfile.rocheLimit`).
     static func rocheLimit(centralMass: Double, planetMass: Double) -> Double {
-        planetProxyRadius * pow(2.0 * centralMass / max(planetMass, 0.1), 1.0 / 3.0)
+        ScaleProfile.visual.rocheLimit(centralMass: centralMass, planetMass: planetMass)
     }
 
     /// Freezes the planet at the central body's position and flags absorption.
@@ -191,7 +197,7 @@ extension GravitySimulationEngine {
     /// Roche limit grows, creating a runaway stripping effect. When mass drops
     /// to 0.5 % of its initial value the planet is considered fully disrupted.
     private func applyTidalStripping(separation sep: Double, dt: Double) -> Bool {
-        let rocheLimit = Self.rocheLimit(centralMass: bodies[0].mass, planetMass: bodies[1].mass)
+        let rocheLimit = scale.rocheLimit(centralMass: bodies[0].mass, planetMass: bodies[1].mass)
         guard sep < rocheLimit else { return false }
 
         let initialMass = twoBodyState.body2InitialMass
@@ -240,7 +246,7 @@ extension GravitySimulationEngine {
     /// are visual only and don't need GR precision.
     private func advanceBleedParticles(dt: Double) {
         let center = bodies[0].position
-        let bleedGM = Self.G * bodies[0].mass
+        let bleedGM = constants.G * bodies[0].mass
         for i in bleedParticles.indices.reversed() {
             let toBody1 = center - bleedParticles[i].position
             let d = max(toBody1.magnitude, softeningLength)
@@ -260,7 +266,7 @@ extension GravitySimulationEngine {
     /// Accumulates proper time from the Schwarzschild metric: dτ/dt = √((1 − rₛ/r) − v²/c²).
     private func accumulateProperTime(schwarzschildRadius rs: Double, separation sep: Double, dt: Double) {
         let rsOverR = min(rs / max(sep, softeningLength), 0.99)
-        let v2OverC2 = min(bodies[1].velocity.magnitudeSquared / Self.cSquared, 0.99)
+        let v2OverC2 = min(bodies[1].velocity.magnitudeSquared / constants.cSquared, 0.99)
         let metricFactor = max(1.0 - rsOverR - v2OverC2, 0.001)
         twoBodyState.accumulatedProperTime += dt * sqrt(metricFactor)
     }
@@ -319,20 +325,20 @@ extension GravitySimulationEngine {
         let r = (bodies[1].position - bodies[0].position).magnitude
         let v2Speed = bodies[1].velocity.magnitude
 
-        let rs = 2.0 * Self.G * bodies[0].mass / Self.cSquared
+        let rs = constants.schwarzschildRadius(mass: bodies[0].mass)
         metrics.schwarzschildRadius = rs
         metrics.photonSphereRadius = 1.5 * rs   // 3GM/c²
         metrics.iscoRadius = 3.0 * rs           // 6GM/c²
-        metrics.isBlackHole = isBlackHoleMode && rs >= Self.blackHoleThreshold
+        metrics.isBlackHole = isCentralBlackHole(schwarzschildRadius: rs)
 
         // dτ/dt = √(1 - rₛ/r) for a stationary observer at radius r
         let ratio = min(rs / max(r, softeningLength), 0.99)
         metrics.timeDilationFactor = sqrt(1.0 - ratio)
 
-        metrics.velocityFractionOfC = v2Speed / Self.c
+        metrics.velocityFractionOfC = v2Speed / constants.c
 
         // γ = 1/√(1 - β²) where β = v/c
-        let beta2 = min((v2Speed * v2Speed) / Self.cSquared, 0.99)
+        let beta2 = min((v2Speed * v2Speed) / constants.cSquared, 0.99)
         metrics.lorentzGamma = 1.0 / sqrt(1.0 - beta2)
 
         metrics.precessionAngle = twoBodyState.accumulatedPrecession * 180.0 / .pi
@@ -352,7 +358,9 @@ extension GravitySimulationEngine {
     /// GR-corrected energy of the relative orbit, conserved by the force law.
     func relativeOrbitEnergy() -> Double {
         let (r, v) = relativeState
-        return RelativeOrbit.energy(r: r, v: v, totalMass: bodies[0].mass + bodies[1].mass, softening: softeningLength)
+        return RelativeOrbit.energy(
+            r: r, v: v, totalMass: bodies[0].mass + bodies[1].mass, softening: softeningLength, constants: constants
+        )
     }
 
     /// Specific angular momentum |r × v| of the relative orbit.

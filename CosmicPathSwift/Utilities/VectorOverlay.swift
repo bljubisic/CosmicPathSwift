@@ -55,9 +55,9 @@ enum VectorOverlay {
 
     /// Dynamical time √(R³/GM) of a system of total mass M and extent R.
     /// Returns 0 when either is not positive (no arrows are drawn then).
-    static func dynamicalTime(extent: Double, totalMass: Double) -> Double {
+    static func dynamicalTime(extent: Double, totalMass: Double, constants: PhysicalConstants = .visual) -> Double {
         guard extent > 0, totalMass > 0 else { return 0 }
-        return sqrt(extent * extent * extent / (GravitySimulationEngine.G * totalMass))
+        return sqrt(extent * extent * extent / (constants.G * totalMass))
     }
 
     /// Simulation-space displacement for `vector`, clamped to `maxLength`.

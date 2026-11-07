@@ -28,31 +28,37 @@ import Foundation
 
 enum InitialConditions {
 
-    private static var G: Double { GravitySimulationEngine.G }
-    private static var cSquared: Double { GravitySimulationEngine.cSquared }
-
     // MARK: - Preset Units
 
-    /// Length (px) and mass units used to scale a dimensionless preset.
+    /// Length and mass units used to scale a dimensionless preset, and the
+    /// constants of the scale they are in.
     struct PresetUnits: Equatable {
         let length: Double
         let mass: Double
+        let constants: PhysicalConstants
+
+        init(length: Double, mass: Double, constants: PhysicalConstants = .visual) {
+            self.length = length
+            self.mass = mass
+            self.constants = constants
+        }
 
         /// Velocity unit √(G·M/L) for G = 1 dimensionless velocities.
-        var velocity: Double { sqrt(GravitySimulationEngine.G * mass / length) }
+        var velocity: Double { sqrt(constants.G * mass / length) }
     }
 
     /// Units for each preset (see file header for how they were chosen).
     static func units(for preset: ThreeBodyPreset, config: SimulationConfig) -> PresetUnits {
+        let constants = config.scale.constants
         switch preset {
         case .figureEight, .lagrangeTriangle:
-            return PresetUnits(length: 150, mass: 25)
+            return PresetUnits(length: 150, mass: 25, constants: constants)
         case .custom:
-            return PresetUnits(length: 150 * config.customSpreadAU, mass: 25)
+            return PresetUnits(length: 150 * config.customSpreadAU, mass: 25, constants: constants)
         case .pythagorean:
-            return PresetUnits(length: 1200, mass: 2.4)
+            return PresetUnits(length: 1200, mass: 2.4, constants: constants)
         case .sunPlanetMoon:
-            return PresetUnits(length: CelestialConstants.baseAU, mass: SunPlanetMoon.starMass)
+            return PresetUnits(length: config.scale.au, mass: SunPlanetMoon.starMass, constants: constants)
         }
     }
 
@@ -90,10 +96,11 @@ enum InitialConditions {
         let mass1 = config.simulationMass1
         let mass2 = config.simulationMass2
         let initial = config.advanced.initial
+        let G = config.scale.constants.G
 
         // Only prevent numerical blow-up at very small separations; no ISCO floor,
         // so the user can create genuinely unstable/plunging orbits.
-        let rs = 2.0 * G * mass1 / cSquared
+        let rs = config.scale.constants.schwarzschildRadius(mass: mass1)
         let eccentricity = clampedEccentricity(initial.eccentricity)
         let separation = periapsisDistance(config: config)
 
@@ -139,8 +146,10 @@ enum InitialConditions {
         let totalMass = mass1 + config.simulationMass2
         let semiMajorAxis = max(config.simulationSeparation, minimumStartDistance(config: config))
         let apoapsis = semiMajorAxis * (1 + eccentricity)
-        let relativeSpeed = periapsisSpeed(totalMass: totalMass, periapsis: periapsis, apoapsis: apoapsis)
-            ?? sqrt(G * totalMass * (1 + eccentricity) / periapsis)
+        let constants = config.scale.constants
+        let relativeSpeed = periapsisSpeed(
+            totalMass: totalMass, periapsis: periapsis, apoapsis: apoapsis, constants: constants
+        ) ?? sqrt(constants.G * totalMass * (1 + eccentricity) / periapsis)
         return relativeSpeed * mass1 / totalMass
     }
 
@@ -155,11 +164,16 @@ enum InitialConditions {
     /// vis-viva speed; as rₐ → rₚ it tends to the circular √(GM/(r − 1.5 rₛ)).
     ///
     /// - Returns: nil when no such orbit exists (the bracket is not positive).
-    static func periapsisSpeed(totalMass: Double, periapsis rp: Double, apoapsis ra: Double) -> Double? {
-        let gm = G * totalMass
+    static func periapsisSpeed(
+        totalMass: Double,
+        periapsis rp: Double,
+        apoapsis ra: Double,
+        constants: PhysicalConstants = .visual
+    ) -> Double? {
+        let gm = constants.G * totalMass
         let numerator = gm * (1 / rp - 1 / ra)
         let denominator = 0.5 * (1 / (rp * rp) - 1 / (ra * ra))
-            - (gm / cSquared) * (1 / (rp * rp * rp) - 1 / (ra * ra * ra))
+            - (gm / constants.cSquared) * (1 / (rp * rp * rp) - 1 / (ra * ra * ra))
         guard numerator > 0, denominator > 0 else { return nil }
         return sqrt(numerator / denominator) / rp
     }
@@ -202,7 +216,7 @@ enum InitialConditions {
               dangerZone(at: periapsisDistance(config: circular), config: config) != danger else {
             return nil
         }
-        let distance = String(format: "%.2f AU", periapsis / CelestialConstants.baseAU)
+        let distance = String(format: "%.2f AU", periapsis / config.scale.au)
         return "Closest approach \(distance) is \(danger.description)."
     }
 
@@ -223,13 +237,14 @@ enum InitialConditions {
     /// The most severe danger zone containing distance `r`, if any.
     /// Uses the same thresholds as `GravitySimulationEngine+TwoBody`.
     static func dangerZone(at r: Double, config: SimulationConfig) -> DangerZone? {
-        let rs = 2.0 * G * config.simulationMass1 / cSquared
-        let isBlackHole = config.isBlackHoleMode && rs >= GravitySimulationEngine.blackHoleThreshold
-        let roche = GravitySimulationEngine.rocheLimit(centralMass: config.simulationMass1,
-                                                       planetMass: config.simulationMass2)
+        let scale = config.scale
+        let rs = scale.constants.schwarzschildRadius(mass: config.simulationMass1)
+        let isBlackHole = scale.blackHoleRule.isBlackHole(schwarzschildRadius: rs,
+                                                          isBlackHoleMode: config.isBlackHoleMode)
+        let roche = scale.rocheLimit(centralMass: config.simulationMass1, planetMass: config.simulationMass2)
         if isBlackHole && r <= rs { return .eventHorizon }
-        let surface = GravitySimulationEngine.starSurfaceRadius(
-            schwarzschildRadius: rs, softening: config.advanced.engine.effectiveSoftening
+        let surface = scale.starSurfaceRadius(
+            mass: config.simulationMass1, softening: config.advanced.engine.effectiveSoftening
         )
         if !config.isBlackHoleMode && r <= surface {
             return .starSurface
@@ -335,7 +350,7 @@ enum InitialConditions {
 
         let virial = randomLayoutVirialRange.lowerBound
             + (randomLayoutVirialRange.upperBound - randomLayoutVirialRange.lowerBound) * generator.nextUnit()
-        let scale = virialVelocityScale(framed, virialRatio: virial) * velocityFactor
+        let scale = virialVelocityScale(framed, virialRatio: virial, constants: units.constants) * velocityFactor
         return framed.map { body in
             var scaled = body
             scaled.velocity = body.velocity * scale
@@ -365,14 +380,16 @@ enum InitialConditions {
     }
 
     /// Factor that scales the bodies' velocities so that K = virialRatio × |U|.
-    private static func virialVelocityScale(_ bodies: [CelestialBody], virialRatio: Double) -> Double {
+    private static func virialVelocityScale(
+        _ bodies: [CelestialBody], virialRatio: Double, constants: PhysicalConstants
+    ) -> Double {
         let atRest = bodies.map { body -> CelestialBody in
             var still = body
             still.velocity = .zero
             return still
         }
-        let potential = NBodyGravity.newtonianEnergy(atRest)
-        let kinetic = NBodyGravity.newtonianEnergy(bodies) - potential
+        let potential = NBodyGravity.newtonianEnergy(atRest, constants: constants)
+        let kinetic = NBodyGravity.newtonianEnergy(bodies, constants: constants) - potential
         guard kinetic > 0, potential < 0 else { return 0 }
         return sqrt(virialRatio * -potential / kinetic)
     }
@@ -423,8 +440,9 @@ enum InitialConditions {
         }
 
         let totalMass = NBodyGravity.totalMass(placed)
+        let G = units.constants.G
         let newtonianOmegaSquared = G * totalMass / (side * side * side)
-        let grFactor = max(1.0 - 3.0 * G * totalMass / (side * cSquared), 0.1)
+        let grFactor = max(1.0 - 3.0 * G * totalMass / (side * units.constants.cSquared), 0.1)
         let omega = sqrt(newtonianOmegaSquared / grFactor) * velocityFactor
 
         let com = NBodyGravity.centerOfMass(placed)
@@ -473,9 +491,11 @@ enum InitialConditions {
         }
 
         /// GR-corrected circular speed √(GM / (r − 3GM/c²)) for the app's force law.
-        private static func circularSpeed(mass: Double, radius: Double) -> Double {
-            let gm = GravitySimulationEngine.G * mass
-            let denominator = max(radius - 3 * gm / GravitySimulationEngine.cSquared, radius * 0.1)
+        private static func circularSpeed(
+            mass: Double, radius: Double, constants: PhysicalConstants = .visual
+        ) -> Double {
+            let gm = constants.G * mass
+            let denominator = max(radius - 3 * gm / constants.cSquared, radius * 0.1)
             return sqrt(gm / denominator)
         }
     }

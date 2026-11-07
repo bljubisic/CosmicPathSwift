@@ -53,7 +53,7 @@ struct DiagnosticsSection: View {
         ) {
             if let elements = viewModel.orbitalElements {
                 HStack {
-                    valueColumn("a", elements.isBound ? Self.au(elements.semiMajorAxis) : "unbound")
+                    valueColumn("a", elements.isBound ? Self.au(elements.semiMajorAxis, scale: viewModel.config.scale) : "unbound")
                     valueColumn("e", String(format: "%.3f", elements.eccentricity))
                     valueColumn("T", elements.period.map { String(format: "%.1f", $0) } ?? "—")
                 }
@@ -106,8 +106,8 @@ struct DiagnosticsSection: View {
     }
 
     /// Semi-major axis in AU, e.g. "1.002 AU".
-    private static func au(_ pixels: Double) -> String {
-        String(format: "%.3f AU", pixels / CelestialConstants.baseAU)
+    private static func au(_ length: Double, scale: ScaleProfile) -> String {
+        String(format: "%.3f AU", length / scale.au)
     }
 }
 
