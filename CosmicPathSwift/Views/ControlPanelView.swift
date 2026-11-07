@@ -44,6 +44,11 @@ struct ControlPanelView: View {
     let canvasSize: CGSize
     /// When false, hides the black hole toggle and parameter sliders (landscape mode).
     var showParameterControls: Bool = true
+    /// Opens the Advanced sheet (owned by `ContentView`).
+    var onShowAdvanced: () -> Void = {}
+
+    /// Opt-in that reveals the Advanced button. Persisted across launches.
+    @AppStorage(AdvancedSettings.optInStorageKey) private var isAdvancedEnabled = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -83,6 +88,16 @@ struct ControlPanelView: View {
                 .buttonStyle(.bordered)
                 .tint(.blue)
                 .help("Reset Camera")
+
+                if isAdvancedEnabled {
+                    Button(action: onShowAdvanced) {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.purple)
+                    .help("Advanced")
+                    .accessibilityLabel("Advanced")
+                }
             }
 
             // Mode switch and parameters (portrait only)
@@ -94,6 +109,8 @@ struct ControlPanelView: View {
                 } else {
                     twoBodyControls
                 }
+
+                advancedOptInToggle
 
                 if viewModel.isRunning {
                     runningHint
@@ -254,6 +271,25 @@ struct ControlPanelView: View {
             get: { viewModel.config.showHabitableZone },
             set: { viewModel.setHabitableZoneVisible($0) }
         )
+    }
+
+    // MARK: - Advanced Opt-In
+
+    /// Shows or hides the Advanced button. Off by default so casual users see
+    /// no change; once on, the button also appears in landscape and while running.
+    private var advancedOptInToggle: some View {
+        Toggle(isOn: $isAdvancedEnabled) {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundStyle(isAdvancedEnabled ? .purple : .gray)
+                    .font(.system(size: 10))
+                Text("Advanced Controls")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .toggleStyle(.switch)
+        .tint(.purple)
     }
 
     // MARK: - Running Hint

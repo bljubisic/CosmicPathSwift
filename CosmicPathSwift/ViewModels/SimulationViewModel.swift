@@ -30,7 +30,6 @@
 //
 
 import Foundation
-import ReplayKit
 import SwiftUI
 
 @Observable
@@ -66,23 +65,84 @@ class SimulationViewModel {
     var isRunning: Bool = false
     var metrics = RelativisticMetrics()
     var systemMetrics = SystemMetrics()
-    var config = SimulationConfig()
-
-    /// True while a ReplayKit screen recording is in progress.
-    var isRecording: Bool = false
-
-    /// The finished recording awaiting share/save, set by `stopRecording()`.
-    ///
-    /// `ContentView` binds its share sheet to this via `.sheet(item:)`: the sheet
-    /// appears when it becomes non-nil, and SwiftUI sets it back to nil on dismiss.
-    /// The view model owns the temp file — whenever this value is cleared or
-    /// replaced, the previous recording's file is deleted.
-    var pendingRecording: RecordingItem? {
+    var config = SimulationConfig() {
         didSet {
-            if let old = oldValue, old != pendingRecording {
-                try? FileManager.default.removeItem(at: old.url)
+            let needsRestart = config.advanced.initial != oldValue.advanced.initial
+                || config.advanced.engine != oldValue.advanced.engine
+            if needsRestart, isSetup {
+                // Starting conditions and physics settings only take effect at
+                // setup, so restart with them (the sheet only allows editing them
+                // while paused).
+                setup(canvasSize: currentCanvasSize)
+            } else if config.advanced.display != oldValue.advanced.display
+                        || config.advanced.habitableZone != oldValue.advanced.habitableZone {
+                // Display and habitable-zone options only change projection, so
+                // re-project at once; this makes them work while paused as well
+                // as while running.
+                syncState()
             }
         }
+    }
+
+    /// Warning shown in the Advanced sheet when the eccentricity brings the
+    /// planet's closest approach inside a danger radius (2-body only).
+    var periapsisWarning: String? {
+        InitialConditions.periapsisWarning(config: config)
+    }
+
+    // MARK: - Chaos Twin State
+
+    /// Canvas positions of the unperturbed twin's bodies. Empty without a twin.
+    var ghostPositions: [CGPoint] = []
+
+    /// Canvas trails of the twin's bodies, index-aligned with `ghostPositions`.
+    var ghostTrails: [[CGPoint]] = []
+
+    /// IDs of the twin's bodies (for their palette colours).
+    var ghostIDs: [Int] = []
+
+    /// Largest main-vs-twin body distance in length units; nil without a twin.
+    var twinDivergence: Double?
+
+    /// Simulated time at which the runs diverged, if they have.
+    var twinDivergenceTime: Double?
+
+    /// True when the chosen accuracy and speed need more steps per frame than
+    /// `TimeSettings.maxStepsPerFrame`, so the simulation runs slower than asked.
+    private(set) var isSpeedLimited: Bool = false
+
+    /// Integration step actually used: the scenario's `timeStep` scaled by the
+    /// Accuracy multiplier from the Advanced sheet.
+    var effectiveTimeStep: Double {
+        config.timeStep * config.advanced.time.timeStepMultiplier
+    }
+
+    /// Screen recording state and the finished clip awaiting share/save.
+    let recorder = ScreenRecorder()
+
+    /// Time series of the current run, for the drift charts and CSV export.
+    let diagnostics = DiagnosticsRecorder()
+
+    /// Osculating elements of the planet's orbit (2-body only, until absorbed).
+    var orbitalElements: OrbitalElements? {
+        guard !isThreeBodyMode, !metrics.isAbsorbed, let bodies = engine?.bodies, bodies.count == 2 else { return nil }
+        return OrbitalElements.osculating(
+            relativePosition: bodies[1].position - bodies[0].position,
+            relativeVelocity: bodies[1].velocity - bodies[0].velocity,
+            totalMass: NBodyGravity.totalMass(bodies)
+        )
+    }
+
+    /// Measured vs predicted precession per orbit (2-body only). Nil until an
+    /// orbit has completed and both turning points have been seen.
+    var precessionComparison: PrecessionComparison? {
+        guard !isThreeBodyMode, metrics.orbitsCompleted > 0,
+              let periapsis = metrics.periapsisDistance, let apoapsis = metrics.apoapsisDistance,
+              let bodies = engine?.bodies else { return nil }
+        return PrecessionComparison(
+            measuredPerOrbit: metrics.precessionAngle / Double(metrics.orbitsCompleted),
+            totalMass: NBodyGravity.totalMass(bodies), periapsis: periapsis, apoapsis: apoapsis
+        )
     }
 
     /// Current coordinate scale factor (simulation units → canvas pixels).
@@ -92,6 +152,13 @@ class SimulationViewModel {
     /// Canvas-space positions and opacities of active bleed particles.
     /// Projected from 3D each frame in `syncState()` for rendering in `SimulationCanvasView`.
     var bleedParticleData: [(position: CGPoint, opacity: Double)] = []
+
+    /// Canvas-space velocity arrow per body (index-aligned with `bodyPositions`).
+    /// Empty unless enabled in the Advanced sheet.
+    var velocityArrows: [CanvasArrow] = []
+
+    /// Canvas-space acceleration arrow per body. Empty unless enabled.
+    var accelerationArrows: [CanvasArrow] = []
 
     // MARK: - Habitable Zone State
 
@@ -116,10 +183,7 @@ class SimulationViewModel {
     var isHabitableZoneOffScreen: Bool = false
 
     /// Number of vertices in each projected habitable-zone ring.
-    static let habitableZoneRingSamples = 96
-
-    /// The zone counts as off-screen beyond this multiple of the zoom extent.
-    private static let habitableZoneOffScreenFactor = 1.5
+    static let habitableZoneRingSamples = HabitableZoneProjection.ringSamples
 
     /// Habitable zone of body1 in 2-body mode, or nil in 3-body mode or when hidden.
     /// Depends only on config, so it is constant during a run.
@@ -179,11 +243,20 @@ class SimulationViewModel {
     /// a portrait layout switch (only needs a canvas resize, not engine recreation).
     var isSetup: Bool { engine != nil }
 
-    private let engineFactory: @Sendable ([CelestialBody]) -> SimulationEngineProtocol
+    /// Builds an engine from the initial bodies and the Advanced physics settings.
+    typealias EngineFactory = @Sendable ([CelestialBody], EngineSettings) -> SimulationEngineProtocol
+
+    private let engineFactory: EngineFactory
     private var engine: SimulationEngineProtocol?
     private var simulationTask: Task<Void, Never>?
     private var transformer = CoordinateTransformer(canvasSize: .zero)
     private var currentCanvasSize: CGSize = .zero
+
+    /// Turns the speed and accuracy multipliers into whole steps per frame.
+    private var stepPlanner = FrameStepPlanner()
+
+    /// Unperturbed copy of the 3-body system for the chaos experiment, if enabled.
+    private var chaosTwin: ChaosTwin?
 
     /// Tracks the maximum distance any body reaches from the centre of mass, used to
     /// dynamically zoom out so the entire system always fits on screen.
@@ -195,6 +268,12 @@ class SimulationViewModel {
     /// Reference mass for `bodyMassMultipliers` in 3-body mode (the preset's mass unit).
     private var massUnit: Double = 1
 
+    /// Dynamical time √(R³/GM) of the initial system; scales the vector arrows.
+    private var vectorDynamicalTime: Double = 0
+
+    /// Longest arrow allowed, in simulation units (the initial view extent).
+    private var vectorMaxLength: Double = 0
+
     /// Instantaneous centre of mass in simulation space, updated every frame.
     /// Used as the `centerOffset` for the coordinate transformer so the view
     /// stays centred on the system even when numerical integration causes the
@@ -204,8 +283,8 @@ class SimulationViewModel {
     // MARK: - Init
 
     init(
-        engineFactory: @escaping @Sendable ([CelestialBody]) -> SimulationEngineProtocol = { bodies in
-            GravitySimulationEngine(bodies: bodies)
+        engineFactory: @escaping EngineFactory = { bodies, settings in
+            GravitySimulationEngine(bodies: bodies, settings: settings)
         }
     ) {
         self.engineFactory = engineFactory
@@ -241,9 +320,17 @@ class SimulationViewModel {
         minimumExtent = initialExtent * CelestialConstants.orbitMarginFactor
         maxExtent = minimumExtent
         transformer = makeTransformer()
+        vectorDynamicalTime = VectorOverlay.dynamicalTime(
+            extent: initialExtent, totalMass: NBodyGravity.totalMass(bodies)
+        )
+        vectorMaxLength = minimumExtent
 
-        engine = engineFactory(bodies)
+        engine = engineFactory(bodies, config.advanced.engine)
         engine?.isBlackHoleMode = config.mode == .twoBody && config.isBlackHoleMode
+        chaosTwin = makeChaosTwin()
+        diagnostics.reset()
+        stepPlanner.reset()
+        updateSpeedLimited()
         syncState()
     }
 
@@ -269,28 +356,26 @@ class SimulationViewModel {
     }
 
     /// Stops the simulation and restores defaults. The selected mode and 3-body
-    /// preset are kept so Reset restarts the scenario the user is looking at.
+    /// preset are kept so Reset restarts the scenario the user is looking at,
+    /// and the Advanced settings are kept so experienced users don't have to
+    /// re-enter them (use `restoreAdvancedDefaults()` for that).
     func reset(canvasSize: CGSize) {
         // Silently discard any in-progress recording rather than surfacing
         // a save/share sheet mid-reset, which would be jarring for the user.
-        if isRecording {
-            RPScreenRecorder.shared().stopRecording { _, _ in }
-            isRecording = false
-        }
-        // Clearing deletes any unshared temp file (see `pendingRecording.didSet`).
-        pendingRecording = nil
+        recorder.discard()
         pause()
 
         var defaults = SimulationConfig()
         defaults.mode = config.mode
         defaults.threeBodyPreset = config.threeBodyPreset
+        defaults.advanced = config.advanced
         config = defaults
         applyIntegrationSettings()
 
         // Reset camera to the default 30° elevation view so the orbit is
         // always recognisable after reset.
-        cameraAzimuth = 0.0
-        cameraElevation = .pi / 6
+        cameraAzimuth = CameraPreset.tilted.azimuth
+        cameraElevation = CameraPreset.tilted.elevation
         setup(canvasSize: canvasSize)
     }
 
@@ -304,6 +389,22 @@ class SimulationViewModel {
     /// Reinitialises the simulation with current config without changing run state.
     func applyConfigChange(canvasSize: CGSize) {
         setup(canvasSize: canvasSize)
+    }
+
+    /// Advances one frame while paused ("Step One Frame" in the Advanced sheet).
+    /// Does nothing while running. Always runs at least one step, so it still
+    /// moves at speeds where a frame would otherwise contain no step.
+    func stepFrame() {
+        guard !isRunning, engine != nil else { return }
+        advance(steps: max(planSteps(), 1))
+        syncState()
+    }
+
+    /// Returns every Advanced setting to its default ("Restore defaults" in the sheet).
+    /// If the starting conditions or physics settings were changed, the simulation restarts with the
+    /// standard ones (see `config.didSet`); otherwise the run is left alone.
+    func restoreAdvancedDefaults() {
+        config.advanced = AdvancedSettings()
     }
 
     /// Shows or hides the habitable zone. Only affects rendering, so it works
@@ -350,8 +451,13 @@ class SimulationViewModel {
     /// Called when the user taps "Reset Camera". Restores the view angle that
     /// gives a natural 3D perspective on a flat orbit without losing any simulation state.
     func resetCamera() {
-        cameraAzimuth = 0.0
-        cameraElevation = .pi / 6
+        applyCameraPreset(.tilted)
+    }
+
+    /// Turns the camera to a fixed orientation (Advanced sheet) without touching the simulation.
+    func applyCameraPreset(_ preset: CameraPreset) {
+        cameraAzimuth = preset.azimuth
+        cameraElevation = preset.elevation
         transformer = makeTransformer()
         syncState()
     }
@@ -387,55 +493,74 @@ class SimulationViewModel {
         )
     }
 
-    // MARK: - Screen Recording
-
-    /// Starts a ReplayKit screen recording of the simulation.
-    ///
-    /// Has no effect if the device does not support recording (`isAvailable`),
-    /// or if a recording is already in progress. `isRecording` is set to `true`
-    /// only after ReplayKit confirms the recording has started successfully.
-    func startRecording() {
-        let recorder = RPScreenRecorder.shared()
-        guard recorder.isAvailable, !isRecording else { return }
-        recorder.startRecording { error in
-            Task { @MainActor [weak self] in
-                if error == nil {
-                    self?.isRecording = true
-                }
-            }
-        }
-    }
-
-    /// Stops the current screen recording and writes the clip to a temporary `.mp4` file.
-    ///
-    /// On success, sets `pendingRecording`, which presents the share/save sheet.
-    /// The temp file is deleted once `pendingRecording` is cleared.
-    /// Has no effect if no recording is in progress.
-    func stopRecording() {
-        guard isRecording else { return }
-        // Write the clip to a uniquely-named temp file so concurrent calls
-        // don't collide, and so it persists until the share sheet is dismissed.
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("orbit_\(Int(Date().timeIntervalSince1970))")
-            .appendingPathExtension("mp4")
-        RPScreenRecorder.shared().stopRecording(withOutput: tempURL) { [weak self] error in
-            Task { @MainActor [weak self] in
-                self?.isRecording = false
-                if error == nil {
-                    self?.pendingRecording = RecordingItem(url: tempURL)
-                }
-            }
-        }
-    }
-
     // MARK: - Simulation Loop
 
-    private func tick() {
-        guard let engine else { return }
-        for _ in 0..<config.stepsPerFrame {
-            engine.step(dt: config.timeStep)
-        }
+    /// One rendered frame: runs the planned number of steps, then syncs state.
+    /// Internal (not private) so tests can drive frames without the timer.
+    func tick() {
+        guard engine != nil else { return }
+        advance(steps: planSteps())
         syncState()
+    }
+
+    /// Steps for the next frame. The multipliers are read every frame, so
+    /// changes in the Advanced sheet apply immediately, even while running.
+    /// The cap shrinks for costlier integrators and when a chaos twin shares the frame.
+    private func planSteps() -> Int {
+        let cap = FrameStepPlanner.stepCap(
+            integrator: config.advanced.engine.integrator, engineCount: chaosTwin == nil ? 1 : 2
+        )
+        let steps = stepPlanner.steps(baseSteps: config.stepsPerFrame, time: config.advanced.time, maxSteps: cap)
+        updateSpeedLimited()
+        return steps
+    }
+
+    private func advance(steps: Int) {
+        guard let engine else { return }
+        let dt = effectiveTimeStep
+        for _ in 0..<steps {
+            engine.step(dt: dt)
+            chaosTwin?.step(dt: dt)
+        }
+    }
+
+    /// Builds the unperturbed twin when the chaos experiment is on (3-body, ε > 0).
+    private func makeChaosTwin() -> ChaosTwin? {
+        guard isThreeBodyMode, config.advanced.initial.isTwinActive else { return nil }
+        let preset = config.threeBodyPreset
+        let unperturbed = InitialConditions.threeBody(preset: preset, config: config, applyingNudge: false)
+        let lengthUnit = InitialConditions.units(for: preset, config: config).length
+        // Same physics settings as the main run, so only the nudge differs.
+        return ChaosTwin(engine: engineFactory(unperturbed, config.advanced.engine), lengthUnit: lengthUnit)
+    }
+
+    /// Projects the twin's bodies and trails and refreshes the divergence readout.
+    private func updateChaosTwin(mainBodies: [CelestialBody]) {
+        guard let chaosTwin else {
+            if !ghostPositions.isEmpty || twinDivergence != nil {
+                ghostPositions = []
+                ghostTrails = []
+                ghostIDs = []
+                twinDivergence = nil
+                twinDivergenceTime = nil
+            }
+            return
+        }
+        chaosTwin.measureDivergence(against: mainBodies)
+        let twinBodies = chaosTwin.bodies
+        let trailLimit = config.advanced.display.trailPointLimit
+        ghostPositions = twinBodies.map { transformer.simulationToCanvas($0.position) }
+        ghostTrails = twinBodies.map { transformer.transformTrail(Array($0.trail.suffix(trailLimit))) }
+        ghostIDs = twinBodies.map(\.id)
+        twinDivergence = chaosTwin.relativeDivergence
+        twinDivergenceTime = chaosTwin.divergenceTime
+    }
+
+    /// Copies the planner's flag, writing only on change to avoid needless view updates.
+    private func updateSpeedLimited() {
+        if isSpeedLimited != stepPlanner.isSpeedLimited {
+            isSpeedLimited = stepPlanner.isSpeedLimited
+        }
     }
 
     /// Syncs positions, trails, and metrics from the engine to observable state.
@@ -451,61 +576,63 @@ class SimulationViewModel {
             (position: transformer.simulationToCanvas(particle.position), opacity: particle.life)
         }
 
+        updateVectorArrows(bodies)
+        updateChaosTwin(mainBodies: bodies)
+
         metrics = engine.metrics
         systemMetrics = engine.systemMetrics
         coordinateScale = transformer.scale
 
         updateHabitableZone(bodies)
+        recordDiagnostics(bodies)
+    }
+
+    /// Offers this frame to the recorder; it ignores frames where time hasn't advanced.
+    private func recordDiagnostics(_ bodies: [CelestialBody]) {
+        let isTwoBody = !isThreeBodyMode
+        diagnostics.record(
+            time: isTwoBody ? metrics.elapsedTime : systemMetrics.elapsedTime,
+            energyDrift: isTwoBody ? metrics.energyDrift : systemMetrics.energyDrift,
+            angularMomentumDrift: isTwoBody ? metrics.angularMomentumDrift : systemMetrics.angularMomentumDrift,
+            bodies: bodies
+        )
+    }
+
+    // MARK: - Vectors
+
+    /// Projects velocity / acceleration arrows for the enabled kinds.
+    private func updateVectorArrows(_ bodies: [CelestialBody]) {
+        let display = config.advanced.display
+        velocityArrows = display.showVelocityVectors ? arrows(.velocity, for: bodies) : []
+        accelerationArrows = display.showAccelerationVectors ? arrows(.acceleration, for: bodies) : []
+    }
+
+    private func arrows(_ kind: VectorOverlay.Kind, for bodies: [CelestialBody]) -> [CanvasArrow] {
+        VectorOverlay.arrows(
+            for: bodies, kind: kind, dynamicalTime: vectorDynamicalTime,
+            maxLength: vectorMaxLength, transformer: transformer
+        )
     }
 
     // MARK: - Habitable Zone
 
     /// Re-projects the habitable-zone rings and updates the planet's status.
     private func updateHabitableZone(_ bodies: [CelestialBody]) {
-        guard let zone = habitableZone, bodies.count >= 2 else {
-            clearHabitableZone()
-            return
-        }
-        let star = bodies[0]
-        let planet = bodies[1]
-        let normal = orbitalNormal(star: star, planet: planet)
-        habitableZoneInnerRing = projectedRing(center: star.position, normal: normal, radius: zone.innerPx)
-        habitableZoneOuterRing = projectedRing(center: star.position, normal: normal, radius: zone.outerPx)
-        isHabitableZoneOffScreen = zone.innerPx > maxExtent * Self.habitableZoneOffScreenFactor
-
-        if metrics.isAbsorbed {
-            habitableStatus = nil
-            planetEquilibriumTemperature = nil
-        } else {
-            let distanceAU = (planet.position - star.position).magnitude / CelestialConstants.baseAU
-            habitableStatus = zone.status(atDistanceAU: distanceAU)
-            planetEquilibriumTemperature = HabitableZonePhysics.equilibriumTemperature(
-                luminosity: zone.luminosity, distanceAU: distanceAU
+        let projection: HabitableZoneProjection
+        if let zone = habitableZone, bodies.count >= 2 {
+            projection = .project(
+                zone: zone, star: bodies[0], planet: bodies[1], transformer: transformer,
+                maxExtent: maxExtent, isAbsorbed: metrics.isAbsorbed,
+                albedo: config.advanced.habitableZone.bondAlbedo
             )
+        } else {
+            projection = .empty
         }
-    }
-
-    private func clearHabitableZone() {
-        habitableZoneInnerRing = []
-        habitableZoneOuterRing = []
-        habitableStatus = nil
-        planetEquilibriumTemperature = nil
-        isHabitableZoneOffScreen = false
-    }
-
-    /// Unit normal of the planet's orbital plane, (r₂ − r₁) × (v₂ − v₁).
-    /// Conserved under the central GR force, so the band follows any inclination.
-    /// Falls back to ẑ when degenerate (e.g. after absorption).
-    private func orbitalNormal(star: CelestialBody, planet: CelestialBody) -> Vector3D {
-        let angularMomentum = (planet.position - star.position).cross(planet.velocity - star.velocity)
-        guard angularMomentum.magnitude > 1e-9 else { return Vector3D(x: 0, y: 0, z: 1) }
-        return angularMomentum.normalized
-    }
-
-    private func projectedRing(center: Vector3D, normal: Vector3D, radius: Double) -> [CGPoint] {
-        HabitableZonePhysics.ringPoints(
-            center: center, normal: normal, radius: radius, samples: Self.habitableZoneRingSamples
-        ).map(transformer.simulationToCanvas)
+        habitableZoneInnerRing = projection.innerRing
+        habitableZoneOuterRing = projection.outerRing
+        habitableStatus = projection.status
+        planetEquilibriumTemperature = projection.equilibriumTemperature
+        isHabitableZoneOffScreen = projection.isOffScreen
     }
 
     /// Re-centres on the CoM and adjusts zoom so every tracked body fits.
@@ -518,6 +645,9 @@ class SimulationViewModel {
     /// (neither for the CoM nor the extent), so the camera stays on the remaining
     /// bound system instead of zooming out forever. The transformer is only rebuilt
     /// when the extent or CoM actually changes.
+    ///
+    /// With Lock Zoom on (Advanced sheet) the extent is left as it is, so the scale
+    /// stays fixed; the view still follows the CoM.
     private func updateZoom(for bodies: [CelestialBody]) {
         let ejectedID = engine?.systemMetrics.ejectedBodyID
         let tracked = bodies.filter { $0.id != ejectedID || bodies.count == 1 }
@@ -532,7 +662,9 @@ class SimulationViewModel {
         let targetExtent = max(currentMax * 1.15, minimumExtent)
         let previousExtent = maxExtent
 
-        if targetExtent > maxExtent {
+        if config.advanced.display.lockZoom {
+            // Keep the current extent.
+        } else if targetExtent > maxExtent {
             // Zoom out immediately so bodies are never clipped off-screen.
             maxExtent = targetExtent
         } else {
@@ -555,7 +687,9 @@ class SimulationViewModel {
     /// Projects every body's position and trail to canvas space and depth-sorts them.
     private func projectBodies(_ bodies: [CelestialBody]) {
         bodyPositions = bodies.map { transformer.simulationToCanvas($0.position) }
-        bodyTrails = bodies.map { transformer.transformTrail($0.trail) }
+        // The engine keeps a longer buffer; project only the points the user asked for.
+        let trailLimit = config.advanced.display.trailPointLimit
+        bodyTrails = bodies.map { transformer.transformTrail(Array($0.trail.suffix(trailLimit))) }
         bodyKinds = bodies.map(\.kind)
         bodyIDs = bodies.map(\.id)
         bodyMasses = bodies.map(\.mass)

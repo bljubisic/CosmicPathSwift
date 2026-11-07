@@ -67,6 +67,29 @@ struct HabitableZonePhysicsTests {
         let zone = HabitableZone(luminosity: 1)
         #expect(zone.status(atDistanceAU: distanceAU) == expected)
     }
+
+    // MARK: Settings (issue #20, PR 6)
+
+    /// T ∝ (1 − A)^¼, so a brighter planet is cooler by that factor.
+    @Test func albedoScalesTemperature() {
+        let standard = HabitableZonePhysics.equilibriumTemperature(luminosity: 1, distanceAU: 1)
+        let reflective = HabitableZonePhysics.equilibriumTemperature(luminosity: 1, distanceAU: 1, albedo: 0.6)
+        #expect(abs(reflective - standard * pow((1 - 0.6) / (1 - 0.3), 0.25)) < 1e-9)
+    }
+
+    @Test func optimisticLimitsWidenZone() {
+        let conservative = HabitableZone(luminosity: 1, limits: .conservative)
+        let optimistic = HabitableZone(luminosity: 1, limits: .optimistic)
+        #expect(optimistic.innerAU < conservative.innerAU)
+        #expect(optimistic.outerAU > conservative.outerAU)
+        #expect(conservative == HabitableZone(luminosity: 1))
+    }
+
+    @Test func forCentralBodyUsesConfiguredLimits() {
+        var config = SimulationConfig()
+        config.advanced.habitableZone.limits = .optimistic
+        #expect(HabitableZone.forCentralBody(of: config) == HabitableZone(luminosity: 1, limits: .optimistic))
+    }
 }
 
 // MARK: - Ring Geometry
@@ -99,7 +122,7 @@ struct HabitableZoneRingTests {
 struct HabitableZoneViewModelTests {
 
     private func makeViewModel() -> SimulationViewModel {
-        SimulationViewModel { bodies in MockSimulationEngine(bodies: bodies) }
+        SimulationViewModel { bodies, _ in MockSimulationEngine(bodies: bodies) }
     }
 
     private let canvas = CGSize(width: 400, height: 300)
@@ -150,11 +173,85 @@ struct HabitableZoneViewModelTests {
         #expect(!vm.isHabitableZoneOffScreen)
     }
 
+    /// Habitable-zone settings only change rendering: they re-project at once,
+    /// even while running, without building a new engine.
+    @Test func changingSettingsReprojectsWithoutRestart() throws {
+        final class Counter: @unchecked Sendable { var engines = 0 }
+        let counter = Counter()
+        let vm = SimulationViewModel { bodies, _ in
+            counter.engines += 1
+            return MockSimulationEngine(bodies: bodies)
+        }
+        vm.setup(canvasSize: canvas)
+        vm.start()
+        let ring = vm.habitableZoneInnerRing
+        let temperature = try #require(vm.planetEquilibriumTemperature)
+
+        vm.config.advanced.habitableZone = HabitableZoneSettings(limits: .optimistic, bondAlbedo: 0.6)
+
+        #expect(vm.habitableZoneInnerRing != ring)
+        #expect(try #require(vm.planetEquilibriumTemperature) < temperature)
+        #expect(counter.engines == 1)
+        #expect(vm.isRunning)
+        vm.pause()
+    }
+
     @Test func heavyStarZoneIsOffScreen() {
         let vm = makeViewModel()
         vm.config.mass1Multiplier = 10
         vm.setup(canvasSize: canvas)
         #expect(vm.isHabitableZoneOffScreen)
         #expect(vm.habitableStatus == .tooHot)
+    }
+}
+
+// MARK: - Projection
+
+struct HabitableZoneProjectionTests {
+    private let zone = HabitableZone(luminosity: 1)
+    private let star = CelestialBody(id: 0, kind: .star, mass: 1, position: Vector3D(x: 30, y: -20, z: 0), velocity: .zero)
+    private let transformer = CoordinateTransformer(canvasSize: CGSize(width: 400, height: 300), elevation: 0)
+
+    private func planet(atAU distanceAU: Double) -> CelestialBody {
+        let offset = Vector3D(x: distanceAU * CelestialConstants.baseAU, y: 0, z: 0)
+        return CelestialBody(id: 1, kind: .planet, mass: 1, position: star.position + offset,
+                             velocity: Vector3D(x: 0, y: 1, z: 0))
+    }
+
+    /// Viewed top-down, both rings are circles of the zone radii around the star.
+    @Test func ringsLieAtZoneRadiiAroundStar() {
+        let projection = HabitableZoneProjection.project(
+            zone: zone, star: star, planet: planet(atAU: 1), transformer: transformer,
+            maxExtent: CelestialConstants.baseAU, isAbsorbed: false
+        )
+        let center = transformer.simulationToCanvas(star.position)
+        #expect(projection.innerRing.count == HabitableZoneProjection.ringSamples)
+        for (ring, radius) in [(projection.innerRing, zone.innerPx), (projection.outerRing, zone.outerPx)] {
+            for point in ring {
+                let distance = hypot(point.x - center.x, point.y - center.y)
+                #expect(abs(distance - radius * transformer.scale) < 1e-6)
+            }
+        }
+        #expect(projection.status == .habitable)
+        #expect(!projection.isOffScreen)
+    }
+
+    @Test func absorbedPlanetHasNoStatus() {
+        let projection = HabitableZoneProjection.project(
+            zone: zone, star: star, planet: planet(atAU: 1), transformer: transformer,
+            maxExtent: CelestialConstants.baseAU, isAbsorbed: true
+        )
+        #expect(projection.status == nil)
+        #expect(projection.equilibriumTemperature == nil)
+        #expect(!projection.innerRing.isEmpty)
+    }
+
+    @Test func zoneBeyondViewIsOffScreen() {
+        let projection = HabitableZoneProjection.project(
+            zone: zone, star: star, planet: planet(atAU: 0.2), transformer: transformer,
+            maxExtent: zone.innerPx / 2, isAbsorbed: false
+        )
+        #expect(projection.isOffScreen)
+        #expect(projection.status == .tooHot)
     }
 }

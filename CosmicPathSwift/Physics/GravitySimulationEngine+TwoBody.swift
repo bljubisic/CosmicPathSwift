@@ -13,6 +13,15 @@ import Foundation
 
 extension GravitySimulationEngine {
 
+    // MARK: - Tuning Constants
+
+    /// Simulated time between 2-body trail points. Equals the default `dt`, so
+    /// standard settings record exactly one point per step, as before.
+    static let twoBodyTrailSampleInterval: Double = 0.02
+
+    /// Simulated time between bleed particles (4 default steps, ~60 ms on screen at 1×).
+    static let bleedEmissionInterval: Double = 0.08
+
     // MARK: - State
 
     /// Bookkeeping used only by the 2-body scenario.
@@ -20,9 +29,10 @@ extension GravitySimulationEngine {
         /// Initial mass of body2, used to compute the minimum bleed-out threshold
         /// and to track how much mass has been lost to tidal stripping.
         var body2InitialMass: Double = 0
-        /// Counts steps since the last bleed particle was emitted, so we throttle
-        /// emission to one particle every 4 steps (~60 ms at 4 steps/frame, 60 fps).
-        var bleedStepCounter: Int = 0
+        /// Schedules trail points by simulated time, so trails look the same at any `dt`.
+        var trailSampler = TrailSampler(interval: GravitySimulationEngine.twoBodyTrailSampleInterval)
+        /// Throttles bleed emission by simulated time (only advanced inside the Roche limit).
+        var bleedSampler = TrailSampler(interval: GravitySimulationEngine.bleedEmissionInterval)
 
         // Perihelion precession tracking.
         //
@@ -46,6 +56,22 @@ extension GravitySimulationEngine {
         /// Accumulated proper time of body2 (always ≤ coordinate time).
         /// dτ/dt = √((1 - rₛ/r) - v²/c²) combines gravitational and velocity dilation.
         var accumulatedProperTime: Double = 0
+
+        // Diagnostics (issue #20, PR 6).
+
+        /// Coordinate time integrated so far.
+        var elapsedTime: Double = 0
+        /// Relative-orbit energy at t = 0, the baseline for ΔE/E.
+        var initialEnergy: Double = 0
+        /// Relative-orbit |r × v| at t = 0, the baseline for ΔL/L.
+        var initialAngularMomentum: Double = 0
+        /// Sum of the energy jumps caused by tidal mass loss (which changes M),
+        /// excluded from the drift like merges are in 3-body mode.
+        var strippingEnergyChange: Double = 0
+        /// Separation at the most recent periapsis.
+        var lastPeriapsis: Double?
+        /// Separation at the most recent apoapsis.
+        var lastApoapsis: Double?
     }
 
     // MARK: - Step
@@ -59,7 +85,9 @@ extension GravitySimulationEngine {
 
         guard !metrics.isAbsorbed else { return }
 
+        let previousPositions = bodies.map(\.position)
         integrate(dt: dt)
+        twoBodyState.elapsedTime += dt
 
         // Separation uses the full 3D distance so inclined orbits are handled correctly.
         let rs = 2.0 * Self.G * bodies[0].mass / Self.cSquared
@@ -69,20 +97,37 @@ extension GravitySimulationEngine {
         if applyTidalStripping(separation: sep, dt: dt) { return }
 
         accumulateProperTime(schwarzschildRadius: rs, separation: sep, dt: dt)
-        appendTrailPoints()
+        let fractions = twoBodyState.trailSampler.sampleFractions(forStep: dt)
+        appendTrailPoints(from: previousPositions, atFractions: fractions)
         trackPrecession()
         updateMetrics()
     }
 
-    /// Records the current position of every body in its trail, capped at
-    /// `CelestialBody.maxTrailLength`.
-    func appendTrailPoints() {
+    /// Records one trail point per fraction for every body, linearly interpolated
+    /// between its position at the start of the step and now (fraction 1 = now).
+    /// Trails are capped at `CelestialBody.trailBufferLength`.
+    ///
+    /// If the body count changed during the step (a merge), the start positions no
+    /// longer line up, so the current positions are recorded instead.
+    func appendTrailPoints(from previousPositions: [Vector3D], atFractions fractions: [Double]) {
+        guard !fractions.isEmpty else { return }
+        let canInterpolate = previousPositions.count == bodies.count
         for i in bodies.indices {
-            bodies[i].trail.append(bodies[i].position)
-            if bodies[i].trail.count > CelestialBody.maxTrailLength {
-                bodies[i].trail.removeFirst()
+            let current = bodies[i].position
+            let points = fractions.map { fraction in
+                canInterpolate ? Self.interpolate(previousPositions[i], current, fraction) : current
+            }
+            bodies[i].trail.append(contentsOf: points)
+            let overflow = bodies[i].trail.count - CelestialBody.trailBufferLength
+            if overflow > 0 {
+                bodies[i].trail.removeFirst(overflow)
             }
         }
+    }
+
+    /// Linear interpolation that returns `end` exactly at fraction 1.
+    private static func interpolate(_ start: Vector3D, _ end: Vector3D, _ fraction: Double) -> Vector3D {
+        fraction >= 1 ? end : start + (end - start) * fraction
     }
 
     // MARK: - Absorption
@@ -96,18 +141,30 @@ extension GravitySimulationEngine {
             return true
         }
 
-        if !isBlackHoleMode {
-            // Normal mode: trigger a collision when the planet reaches the star's
-            // surface. The surface radius is defined as max(2 rₛ, softening) so it
-            // scales with stellar mass while never falling below the softening length.
-            // For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
-            let starSurface = max(2.0 * rs, Self.softening * 2)
-            if sep <= starSurface {
-                absorbPlanet()
-                return true
-            }
+        if !isBlackHoleMode && sep <= Self.starSurfaceRadius(schwarzschildRadius: rs, softening: softeningLength) {
+            // Normal mode: the planet reached the star's surface.
+            absorbPlanet()
+            return true
         }
         return false
+    }
+
+    /// Radius at which the planet hits the star in normal mode: max(2 rₛ, 2 × softening).
+    /// It scales with stellar mass while never falling below the softening length.
+    /// For a 1 M☉ star this is ~10 sim-pixels; for a 10 M☉ star it's ~100.
+    static func starSurfaceRadius(
+        schwarzschildRadius rs: Double,
+        softening: Double = GravitySimulationEngine.softening
+    ) -> Double {
+        max(2.0 * rs, softening * 2)
+    }
+
+    /// Proxy for the planet's physical radius used by the Roche limit (sim-pixels).
+    static let planetProxyRadius: Double = 10.0
+
+    /// Roche limit r = R_planet × (2 M₁ / M₂)^⅓, inside which tides strip the planet.
+    static func rocheLimit(centralMass: Double, planetMass: Double) -> Double {
+        planetProxyRadius * pow(2.0 * centralMass / max(planetMass, 0.1), 1.0 / 3.0)
     }
 
     /// Freezes the planet at the central body's position and flags absorption.
@@ -134,16 +191,17 @@ extension GravitySimulationEngine {
     /// Roche limit grows, creating a runaway stripping effect. When mass drops
     /// to 0.5 % of its initial value the planet is considered fully disrupted.
     private func applyTidalStripping(separation sep: Double, dt: Double) -> Bool {
-        let planetProxyRadius: Double = 10.0
-        let rocheLimit = planetProxyRadius * pow(2.0 * bodies[0].mass / max(bodies[1].mass, 0.1), 1.0 / 3.0)
+        let rocheLimit = Self.rocheLimit(centralMass: bodies[0].mass, planetMass: bodies[1].mass)
         guard sep < rocheLimit else { return false }
 
         let initialMass = twoBodyState.body2InitialMass
         let tideFraction = max(0.0, 1.0 - sep / rocheLimit)
         let massLossRate = bodies[1].mass * 0.08 * tideFraction
+        let energyBefore = relativeOrbitEnergy()
         bodies[1].mass = max(bodies[1].mass - massLossRate * dt, initialMass * 0.005)
+        twoBodyState.strippingEnergyChange += relativeOrbitEnergy() - energyBefore
 
-        emitBleedParticleIfDue()
+        emitBleedParticlesIfDue(dt: dt)
 
         // Planet fully disrupted — trigger destruction.
         if bodies[1].mass <= initialMass * 0.005 {
@@ -153,12 +211,17 @@ extension GravitySimulationEngine {
         return false
     }
 
-    /// Emits one bleed particle every 4 steps to keep the count bounded.
-    private func emitBleedParticleIfDue() {
-        twoBodyState.bleedStepCounter += 1
-        guard twoBodyState.bleedStepCounter >= 4 else { return }
-        twoBodyState.bleedStepCounter = 0
+    /// Emits one bleed particle per `bleedEmissionInterval` of simulated time
+    /// spent inside the Roche limit, so the density doesn't depend on `dt`.
+    private func emitBleedParticlesIfDue(dt: Double) {
+        let due = twoBodyState.bleedSampler.sampleFractions(forStep: dt).count
+        for _ in 0..<due {
+            emitBleedParticle()
+        }
+    }
 
+    /// Emits one bleed particle at the planet, capping the total at 300.
+    private func emitBleedParticle() {
         // Initial velocity: planet's velocity scaled down so the particle
         // is sub-circular and spirals inward, plus a small inward nudge.
         let planet = bodies[1]
@@ -180,7 +243,7 @@ extension GravitySimulationEngine {
         let bleedGM = Self.G * bodies[0].mass
         for i in bleedParticles.indices.reversed() {
             let toBody1 = center - bleedParticles[i].position
-            let d = max(toBody1.magnitude, Self.softening)
+            let d = max(toBody1.magnitude, softeningLength)
             // a = GM/d² × r̂  (toward body1)
             let acc = (bleedGM / (d * d * d)) * toBody1
             bleedParticles[i].velocity = bleedParticles[i].velocity + acc * dt
@@ -196,7 +259,7 @@ extension GravitySimulationEngine {
 
     /// Accumulates proper time from the Schwarzschild metric: dτ/dt = √((1 − rₛ/r) − v²/c²).
     private func accumulateProperTime(schwarzschildRadius rs: Double, separation sep: Double, dt: Double) {
-        let rsOverR = min(rs / max(sep, Self.softening), 0.99)
+        let rsOverR = min(rs / max(sep, softeningLength), 0.99)
         let v2OverC2 = min(bodies[1].velocity.magnitudeSquared / Self.cSquared, 0.99)
         let metricFactor = max(1.0 - rsOverR - v2OverC2, 0.001)
         twoBodyState.accumulatedProperTime += dt * sqrt(metricFactor)
@@ -205,24 +268,34 @@ extension GravitySimulationEngine {
     // MARK: - Precession Tracking
 
     /// Detects perihelion passages and measures the accumulated precession angle.
+    /// Also records the separation at each periapsis and apoapsis, for the
+    /// predicted precession in the Advanced sheet.
     ///
     /// A perihelion (closest approach) occurs when the separation transitions from
     /// decreasing to increasing — a local minimum in r(t). At each perihelion we
     /// record θ = atan2(y, x) in the x-y plane (the projection approximates the true
     /// in-plane angle for small inclinations). The angular difference between
     /// successive perihelions is exactly 2π for a closed Newtonian orbit; any excess
-    /// is the precession caused by the GR correction term −3GML²/(c²r⁴).
+    /// is the precession caused by the GR correction term −3GML²/(c²r⁴). Since
+    /// atan2 wraps, that excess is the angle difference itself, wrapped to (−π, π].
     private func trackPrecession() {
         let r = bodies[1].position - bodies[0].position
         let currentSep = r.magnitude
         let isShrinking = currentSep < twoBodyState.previousSeparation
 
+        if !twoBodyState.wasShrinking && isShrinking {
+            // Growing → shrinking: the previous sample was an apoapsis.
+            twoBodyState.lastApoapsis = max(twoBodyState.previousSeparation, currentSep)
+        }
+
         if twoBodyState.wasShrinking && !isShrinking {
+            twoBodyState.lastPeriapsis = min(twoBodyState.previousSeparation, currentSep)
             let angle = atan2(r.y, r.x)
             if let lastAngle = twoBodyState.lastPerihelionAngle {
-                var delta = angle - lastAngle
-                if delta < 0 { delta += 2.0 * .pi }
-                twoBodyState.accumulatedPrecession += delta - 2.0 * .pi
+                // After one full turn the periapsis is back near the same angle, so the
+                // wrapped difference is the advance itself. Wrapping to (−π, π] keeps
+                // its sign (prograde > 0) for any advance below 180° per orbit.
+                twoBodyState.accumulatedPrecession += remainder(angle - lastAngle, 2.0 * .pi)
                 twoBodyState.orbitsCompleted += 1
             }
             twoBodyState.lastPerihelionAngle = angle
@@ -253,7 +326,7 @@ extension GravitySimulationEngine {
         metrics.isBlackHole = isBlackHoleMode && rs >= Self.blackHoleThreshold
 
         // dτ/dt = √(1 - rₛ/r) for a stationary observer at radius r
-        let ratio = min(rs / max(r, Self.softening), 0.99)
+        let ratio = min(rs / max(r, softeningLength), 0.99)
         metrics.timeDilationFactor = sqrt(1.0 - ratio)
 
         metrics.velocityFractionOfC = v2Speed / Self.c
@@ -266,5 +339,50 @@ extension GravitySimulationEngine {
         metrics.separation = r
         metrics.properTime = twoBodyState.accumulatedProperTime
         metrics.orbitsCompleted = twoBodyState.orbitsCompleted
+        updateDiagnosticMetrics()
+    }
+
+    // MARK: - Diagnostics
+
+    /// Relative position and velocity of the planet with respect to the central body.
+    private var relativeState: (r: Vector3D, v: Vector3D) {
+        (bodies[1].position - bodies[0].position, bodies[1].velocity - bodies[0].velocity)
+    }
+
+    /// GR-corrected energy of the relative orbit, conserved by the force law.
+    func relativeOrbitEnergy() -> Double {
+        let (r, v) = relativeState
+        return RelativeOrbit.energy(r: r, v: v, totalMass: bodies[0].mass + bodies[1].mass, softening: softeningLength)
+    }
+
+    /// Specific angular momentum |r × v| of the relative orbit.
+    func relativeOrbitAngularMomentum() -> Double {
+        let (r, v) = relativeState
+        return RelativeOrbit.angularMomentum(r: r, v: v)
+    }
+
+    /// Stores the t = 0 baselines for the drift metrics.
+    func recordInitialInvariants() {
+        twoBodyState.initialEnergy = relativeOrbitEnergy()
+        twoBodyState.initialAngularMomentum = relativeOrbitAngularMomentum()
+    }
+
+    /// Refreshes coordinate time, ΔE/E, ΔL/L and the turning points. The drifts
+    /// keep their last values once the planet is absorbed (its state is frozen).
+    private func updateDiagnosticMetrics() {
+        metrics.elapsedTime = twoBodyState.elapsedTime
+        metrics.periapsisDistance = twoBodyState.lastPeriapsis
+        metrics.apoapsisDistance = twoBodyState.lastApoapsis
+        guard !metrics.isAbsorbed else { return }
+
+        let initialEnergy = twoBodyState.initialEnergy
+        if initialEnergy != 0 {
+            let energy = relativeOrbitEnergy() - twoBodyState.strippingEnergyChange
+            metrics.energyDrift = (energy - initialEnergy) / abs(initialEnergy)
+        }
+        let initialL = twoBodyState.initialAngularMomentum
+        if initialL > 0 {
+            metrics.angularMomentumDrift = abs(relativeOrbitAngularMomentum() - initialL) / initialL
+        }
     }
 }

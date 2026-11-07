@@ -9,7 +9,7 @@
 //  ## Collisions
 //
 //  Two bodies merge when they come within max(2rₛᵢ, 2rₛⱼ, 2·softening) of each
-//  other. The merge is perfectly inelastic: the heavier body survives (keeping
+//  other, unless the collision mode is pass-through. The merge is perfectly inelastic: the heavier body survives (keeping
 //  its ID, kind, and trail) with the summed mass, the momentum-weighted velocity,
 //  and the pair's CoM position. Total mass and momentum are conserved exactly.
 //
@@ -33,7 +33,11 @@ extension GravitySimulationEngine {
     /// Trail points recorded per dynamical time √(R³/GM) of the initial system.
     /// Sampling by simulated time (not per step) keeps trails comparable across
     /// presets whose time steps differ by more than an order of magnitude.
-    static let trailSamplesPerDynamicalTime: Double = 100
+    ///
+    /// Was 100 when the sampler reset to zero after each sample, which made the
+    /// real spacing ⌈interval/dt⌉·dt — about twice the nominal interval. Now that
+    /// leftover time carries over, 50 keeps the trails looking as they did.
+    static let trailSamplesPerDynamicalTime: Double = 50
 
     // MARK: - State
 
@@ -45,18 +49,29 @@ extension GravitySimulationEngine {
         let initialExtent: Double
         /// Simulated time between trail samples.
         let trailSampleInterval: Double
-        /// Simulated time since the last trail sample.
-        var timeSinceTrailSample: Double = 0
+        /// Schedules trail points every `trailSampleInterval` of simulated time.
+        var trailSampler: TrailSampler
         /// Sum of the Newtonian energy changes caused by inelastic merges, so they
         /// can be excluded from the drift metric.
         var mergeEnergyChange: Double = 0
+        /// Total angular momentum Σ mᵢ rᵢ × vᵢ at t = 0.
+        let initialAngularMomentum: Vector3D
+        /// Normaliser for ΔL: |L₀|, or M·√(GMR) when the system starts without net spin.
+        let angularMomentumScale: Double
+        /// Sum of the angular-momentum changes caused by merges (the pair's
+        /// internal L), excluded from the drift metric.
+        var mergeAngularMomentumChange: Vector3D = .zero
 
-        init(bodies: [CelestialBody]) {
+        init(bodies: [CelestialBody], softening: Double) {
             let com = NBodyGravity.centerOfMass(bodies)
             let extent = bodies.map { ($0.position - com).magnitude }.max() ?? 0
             let mass = NBodyGravity.totalMass(bodies)
-            initialEnergy = NBodyGravity.newtonianEnergy(bodies)
+            initialEnergy = NBodyGravity.newtonianEnergy(bodies, softening: softening)
             initialExtent = extent
+            initialAngularMomentum = NBodyGravity.angularMomentum(bodies)
+            angularMomentumScale = Self.angularMomentumScale(
+                initial: initialAngularMomentum.magnitude, mass: mass, extent: extent
+            )
 
             if extent > 0 && mass > 0 {
                 let dynamicalTime = sqrt(extent * extent * extent / (GravitySimulationEngine.G * mass))
@@ -64,18 +79,29 @@ extension GravitySimulationEngine {
             } else {
                 trailSampleInterval = 0
             }
+            trailSampler = TrailSampler(interval: trailSampleInterval)
+        }
+
+        /// |L₀| unless it is negligible next to the characteristic M·√(GMR),
+        /// which is used instead (figure-eight and Pythagorean have L₀ = 0).
+        private static func angularMomentumScale(initial: Double, mass: Double, extent: Double) -> Double {
+            let characteristic = mass * sqrt(GravitySimulationEngine.G * mass * extent)
+            return initial > 1e-6 * characteristic ? initial : characteristic
         }
     }
 
     // MARK: - Step
 
-    /// One N-body step: integrate, merge colliding bodies, sample trails,
-    /// detect ejection, and refresh `systemMetrics`.
+    /// One N-body step: integrate, merge colliding bodies (unless the collision
+    /// mode is pass-through), sample trails, detect ejection, and refresh `systemMetrics`.
     func stepNBody(dt: Double) {
+        let previousPositions = bodies.map(\.position)
         integrate(dt: dt)
         systemMetrics.elapsedTime += dt
-        resolveCollision()
-        recordTrailsIfDue(dt: dt)
+        if settings.collisionMode == .merge {
+            resolveCollision()
+        }
+        recordTrailsIfDue(from: previousPositions, dt: dt)
         detectEjection()
         updateSystemMetrics()
     }
@@ -83,7 +109,11 @@ extension GravitySimulationEngine {
     // MARK: - Collisions
 
     /// Distance at which two bodies merge: max(2rₛᵢ, 2rₛⱼ, 2·softening).
-    static func collisionDistance(_ a: CelestialBody, _ b: CelestialBody) -> Double {
+    static func collisionDistance(
+        _ a: CelestialBody,
+        _ b: CelestialBody,
+        softening: Double = GravitySimulationEngine.softening
+    ) -> Double {
         let rsA = 2.0 * G * a.mass / cSquared
         let rsB = 2.0 * G * b.mass / cSquared
         return max(2.0 * rsA, 2.0 * rsB, 2.0 * softening)
@@ -94,7 +124,7 @@ extension GravitySimulationEngine {
         for i in bodies.indices {
             for j in bodies.indices where j > i {
                 let distance = (bodies[i].position - bodies[j].position).magnitude
-                if distance <= Self.collisionDistance(bodies[i], bodies[j]) {
+                if distance <= Self.collisionDistance(bodies[i], bodies[j], softening: softeningLength) {
                     merge(i, j)
                     return
                 }
@@ -104,7 +134,8 @@ extension GravitySimulationEngine {
 
     /// Replaces bodies i and j with a single inelastically merged body.
     private func merge(_ i: Int, _ j: Int) {
-        let energyBefore = NBodyGravity.newtonianEnergy(bodies)
+        let energyBefore = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength)
+        let angularMomentumBefore = NBodyGravity.angularMomentum(bodies)
         let (survivorIndex, absorbedIndex) = bodies[i].mass >= bodies[j].mass ? (i, j) : (j, i)
         let survivor = bodies[survivorIndex]
         let absorbed = bodies[absorbedIndex]
@@ -118,20 +149,21 @@ extension GravitySimulationEngine {
         var remaining = bodies
         remaining[survivorIndex] = merged
         remaining.remove(at: absorbedIndex)
-        bodies = NBodyGravity.withAccelerations(remaining)
+        bodies = NBodyGravity.withAccelerations(remaining, softening: softeningLength)
 
-        nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(bodies) - energyBefore
+        nBodyState.mergeEnergyChange += NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - energyBefore
+        nBodyState.mergeAngularMomentumChange = nBodyState.mergeAngularMomentumChange
+            + NBodyGravity.angularMomentum(bodies) - angularMomentumBefore
         systemMetrics.collision = (survivor.id, absorbed.id)
     }
 
     // MARK: - Trails
 
-    /// Appends trail points once per `trailSampleInterval` of simulated time.
-    private func recordTrailsIfDue(dt: Double) {
-        nBodyState.timeSinceTrailSample += dt
-        guard nBodyState.timeSinceTrailSample >= nBodyState.trailSampleInterval else { return }
-        nBodyState.timeSinceTrailSample = 0
-        appendTrailPoints()
+    /// Appends trail points once per `trailSampleInterval` of simulated time,
+    /// interpolated within the step when the interval doesn't divide `dt` evenly.
+    private func recordTrailsIfDue(from previousPositions: [Vector3D], dt: Double) {
+        let fractions = nBodyState.trailSampler.sampleFractions(forStep: dt)
+        appendTrailPoints(from: previousPositions, atFractions: fractions)
     }
 
     // MARK: - Ejection
@@ -162,12 +194,17 @@ extension GravitySimulationEngine {
 
     // MARK: - Metrics
 
-    /// Refreshes energy drift, closest approach, and peak speed.
+    /// Refreshes energy and angular-momentum drift, closest approach, and peak speed.
     func updateSystemMetrics() {
         let initialEnergy = nBodyState.initialEnergy
         if initialEnergy != 0 {
-            let energy = NBodyGravity.newtonianEnergy(bodies) - nBodyState.mergeEnergyChange
+            let energy = NBodyGravity.newtonianEnergy(bodies, softening: softeningLength) - nBodyState.mergeEnergyChange
             systemMetrics.energyDrift = (energy - initialEnergy) / abs(initialEnergy)
+        }
+        if nBodyState.angularMomentumScale > 0 {
+            let change = NBodyGravity.angularMomentum(bodies) - nBodyState.initialAngularMomentum
+                - nBodyState.mergeAngularMomentumChange
+            systemMetrics.angularMomentumDrift = change.magnitude / nBodyState.angularMomentumScale
         }
 
         for i in bodies.indices {

@@ -23,6 +23,9 @@ import SwiftUI
 ///    photons orbit unstably.
 struct BlackHoleEffectsView: View {
     let viewModel: SimulationViewModel
+    /// Whether to draw the ISCO and photon sphere rings (Advanced → Relativistic radii).
+    /// The lensing glow and accretion disk are always drawn.
+    var showsRadii: Bool = true
 
     /// Schwarzschild radius converted from simulation units to canvas pixels.
     private var rs: CGFloat {
@@ -33,8 +36,10 @@ struct BlackHoleEffectsView: View {
         ZStack {
             lensingGlow
             accretionDisk
-            iscoRing
-            photonSphereRing
+            if showsRadii {
+                iscoRing
+                photonSphereRing
+            }
         }
     }
 

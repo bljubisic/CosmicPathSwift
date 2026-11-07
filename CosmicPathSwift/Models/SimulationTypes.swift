@@ -123,11 +123,13 @@ struct CelestialBody {
     var acceleration: Vector3D = .zero
 
     /// Simulation-space positions from recent frames, newest at the end.
-    /// Capped at `maxTrailLength` to bound memory usage.
+    /// Capped at `trailBufferLength` to bound memory usage.
     var trail: [Vector3D] = []
 
-    /// Maximum number of trail positions to retain.
-    static let maxTrailLength = 800
+    /// Maximum number of trail positions the engine retains: enough for the
+    /// longest Trail Length choice (4 × 800). The ViewModel shows only the most
+    /// recent `DisplaySettings.trailPointLimit` of them.
+    static let trailBufferLength = 3200
 }
 
 // MARK: - BleedParticle
@@ -240,6 +242,27 @@ struct RelativisticMetrics {
     /// the Schwarzschild metric: dτ/dt = √((1 - rₛ/r) - v²/c²).
     var properTime: Double = 0
 
+    // MARK: - Diagnostics
+
+    /// Coordinate time t elapsed since the run started (simulation units).
+    var elapsedTime: Double = 0
+
+    /// Relative drift (E − E₀)/|E₀| of the relative orbit's GR-corrected energy
+    /// (see `RelativeOrbit.energy`). That energy is exactly conserved by the
+    /// force law, so this is pure integrator error. Energy changes from tidal
+    /// mass loss are excluded.
+    var energyDrift: Double = 0
+
+    /// Relative drift |L − L₀|/L₀ of the specific angular momentum |r × v|.
+    /// Also exactly conserved by the force law, so also pure integrator error.
+    var angularMomentumDrift: Double = 0
+
+    /// Separation at the most recent periapsis (local minimum), if one was seen.
+    var periapsisDistance: Double?
+
+    /// Separation at the most recent apoapsis (local maximum), if one was seen.
+    var apoapsisDistance: Double?
+
     /// Color representing the current gravitational time dilation severity.
     /// Transitions from cyan (weak field) through blue and purple to
     /// red (extreme dilation near the event horizon).
@@ -273,6 +296,14 @@ struct SystemMetrics {
     /// error plus the non-conservative part of the GR correction term — it is
     /// nonzero partly because GR is switched on.
     var energyDrift: Double = 0
+
+    /// Relative drift of the total angular momentum, |L − L₀ − ΔL_merge| / L_ref.
+    ///
+    /// Pair forces are central and equal and opposite, so L is exactly conserved
+    /// and this is pure integrator error. The internal L lost in merges is
+    /// excluded. L_ref is |L₀|, or a characteristic M·√(GMR) for systems that
+    /// start without net spin (figure-eight, Pythagorean).
+    var angularMomentumDrift: Double = 0
 
     /// Smallest pairwise separation reached so far (simulation pixels).
     var closestApproach: Double = .infinity
@@ -494,6 +525,11 @@ struct SimulationConfig: Equatable {
     /// 1.0 = rigid rotation; other values give eccentric or chaotic motion.
     var customVelocityFactor: Double = 1.0
 
+    // MARK: - Advanced
+
+    /// Settings from the Advanced sheet. Kept across Reset (see `SimulationViewModel.reset`).
+    var advanced = AdvancedSettings()
+
     // MARK: - Derived Simulation Values
 
     /// The simulation mass for body 1 (central body).
@@ -575,4 +611,103 @@ struct RecordingItem: Identifiable, Equatable, Sendable {
     /// Temporary `.mp4` file written by ReplayKit.
     let url: URL
     var id: URL { url }
+}
+
+// MARK: - Advanced Settings
+
+/// Options from the Advanced sheet, for experienced users.
+///
+/// Stored on `SimulationConfig.advanced`. Unlike the basic sliders, these survive
+/// Reset; "Restore defaults" in the sheet returns them to `AdvancedSettings()`.
+/// The defaults reproduce the app's standard behaviour exactly.
+struct AdvancedSettings: Equatable, Codable, Sendable {
+    /// `UserDefaults` key for the opt-in that shows the Advanced button.
+    static let optInStorageKey = "advancedMode"
+
+    /// Rendering-only options. They take effect immediately, even while running.
+    var display = DisplaySettings()
+
+    /// Time-step and speed multipliers. Applied immediately, even while running,
+    /// because they never change the initial conditions.
+    var time = TimeSettings()
+
+    /// Starting conditions (orbit shape, chaos nudge, Custom layout). Changing
+    /// these restarts the setup, so they are edited while paused.
+    var initial = InitialConditionSettings()
+
+    /// Integrator, softening, and collision mode. Changing these restarts the
+    /// setup with a new engine, so they are edited while paused.
+    var engine = EngineSettings()
+
+    /// Habitable-zone flux limits and planet albedo. Rendering-only, so they
+    /// apply immediately, even while running.
+    var habitableZone = HabitableZoneSettings()
+}
+
+/// Time and integration options from the Advanced sheet.
+///
+/// Both are multipliers on the current scenario's own `timeStep` and
+/// `stepsPerFrame`, so the defaults (1, 1) reproduce the standard pacing exactly.
+struct TimeSettings: Equatable, Codable, Sendable {
+    /// Integration step size relative to the scenario's own (accuracy).
+    /// Smaller values are more accurate; the step count rises to keep on-screen speed.
+    var timeStepMultiplier: Double = 1
+
+    /// How fast simulated time runs relative to normal.
+    /// Achieved with more steps per frame, never larger steps, so accuracy is unchanged.
+    var timeSpeed: Double = 1
+
+    /// Values offered by the Accuracy picker.
+    static let timeStepChoices: [Double] = [0.25, 0.5, 1, 2]
+
+    /// Values offered by the Speed picker.
+    static let timeSpeedChoices: [Double] = [0.25, 0.5, 1, 2, 4, 8]
+
+    /// Upper bound on integration steps per frame, so the frame budget holds at
+    /// fine accuracy and high speed. Starting value — to be measured on device.
+    static let maxStepsPerFrame = 1000
+}
+
+/// Rendering-only options from the Advanced sheet. None of these affect the physics.
+struct DisplaySettings: Equatable, Codable, Sendable {
+    /// Draw the warped spacetime grid behind the bodies.
+    var showSpacetimeGrid: Bool = true
+
+    /// Draw the centre-of-mass crosshair at the canvas centre.
+    var showCenterOfMass: Bool = true
+
+    /// Draw the Schwarzschild-radius rings, plus the photon sphere and ISCO
+    /// rings in black hole mode.
+    var showRelativisticRadii: Bool = true
+
+    /// Trail length relative to the standard 800 points; 0 hides trails.
+    /// Points are sampled by simulated time, so this is a fixed time span.
+    var trailLengthMultiplier: Double = 1
+
+    /// Multiplier on how strongly the spacetime grid is pulled toward the bodies.
+    var gridWarpStrength: Double = 1
+
+    /// Draw each body's velocity as an arrow.
+    var showVelocityVectors: Bool = false
+
+    /// Draw each body's gravitational acceleration as an arrow.
+    var showAccelerationVectors: Bool = false
+
+    /// Freeze the automatic zoom at its current scale (the view still follows the CoM).
+    var lockZoom: Bool = false
+
+    /// Trail points shown at multiplier 1 (the length before PR 3).
+    static let baseTrailPoints = 800
+
+    /// Values offered by the Trail Length picker (0 = off).
+    static let trailLengthChoices: [Double] = [0, 0.25, 0.5, 1, 2, 4]
+
+    /// Range of the grid warp slider.
+    static let gridWarpRange: ClosedRange<Double> = 0...3
+
+    /// Number of most-recent trail points to draw per body.
+    var trailPointLimit: Int {
+        let points = (Double(Self.baseTrailPoints) * max(trailLengthMultiplier, 0)).rounded()
+        return min(Int(points), CelestialBody.trailBufferLength)
+    }
 }

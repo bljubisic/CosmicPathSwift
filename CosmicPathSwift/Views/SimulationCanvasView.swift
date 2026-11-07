@@ -33,6 +33,7 @@ import SwiftUI
 /// 7. Gravitational force lines connecting every pair of bodies
 /// 8. Bleed particles (2-body tidal stripping)
 /// 9. Bodies, drawn far-to-near (`renderOrder`) for correct occlusion
+/// 9a. Velocity / acceleration arrows (when enabled in the Advanced sheet)
 /// 10. Formula overlay (field equation / acceleration formula) and habitable-zone badge
 /// 11. Event overlay (absorption, merge, or ejection)
 ///
@@ -65,26 +66,37 @@ struct SimulationCanvasView: View {
     private let threeBodyWarpStrength: CGFloat = 8
 
     private var isThreeBody: Bool { viewModel.isThreeBodyMode }
+    /// Rendering options from the Advanced sheet.
+    private var display: DisplaySettings { viewModel.config.advanced.display }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.black.opacity(0.95)
 
-                spacetimeGrid(size: geometry.size)
+                if display.showSpacetimeGrid {
+                    spacetimeGrid(size: geometry.size)
+                }
 
                 if !isThreeBody && viewModel.habitableZone != nil {
                     HabitableZoneView(viewModel: viewModel)
                 }
 
                 if !isThreeBody && viewModel.metrics.isBlackHole {
-                    BlackHoleEffectsView(viewModel: viewModel)
+                    BlackHoleEffectsView(viewModel: viewModel, showsRadii: display.showRelativisticRadii)
                 }
 
-                if isThreeBody {
-                    threeBodySchwarzschildRings
-                } else {
-                    schwarzschildRing
+                if display.showRelativisticRadii {
+                    if isThreeBody {
+                        threeBodySchwarzschildRings
+                    } else {
+                        schwarzschildRing
+                    }
+                }
+
+                // Unperturbed chaos twin, under the main run (3-body, Advanced sheet).
+                if !viewModel.ghostPositions.isEmpty {
+                    ChaosTwinGhostView(viewModel: viewModel)
                 }
 
                 ForEach(viewModel.bodyTrails.indices, id: \.self) { index in
@@ -92,7 +104,9 @@ struct SimulationCanvasView: View {
                 }
 
                 // Centre-of-mass marker: always at the canvas centre in CoM-centred coords.
-                centerOfMassMarker(size: geometry.size)
+                if display.showCenterOfMass {
+                    centerOfMassMarker(size: geometry.size)
+                }
 
                 // Bleed particles: tidal-stripped material spiraling toward the central body.
                 // Rendered with a Canvas for performance (up to 300 small dots per frame).
@@ -124,9 +138,13 @@ struct SimulationCanvasView: View {
                     }
                 }
 
+                vectorArrows
+
                 formulaOverlay
 
-                if !isThreeBody {
+                if isThreeBody {
+                    ChaosTwinBadge(viewModel: viewModel)
+                } else {
                     HabitableZoneBadge(viewModel: viewModel)
                 }
 
@@ -225,6 +243,24 @@ struct SimulationCanvasView: View {
         }
         return BodyView(kind: kind, radius: radius, tint: viewModel.metrics.timeDilationColor,
                         isHabitable: viewModel.habitableStatus == .habitable)
+    }
+
+    // MARK: - Vector Arrows
+
+    /// Velocity (green) and acceleration (pink) arrows of the visible bodies.
+    @ViewBuilder
+    private var vectorArrows: some View {
+        if !viewModel.velocityArrows.isEmpty {
+            VectorArrowsView(arrows: visibleArrows(viewModel.velocityArrows), color: .green.opacity(0.85))
+        }
+        if !viewModel.accelerationArrows.isEmpty {
+            VectorArrowsView(arrows: visibleArrows(viewModel.accelerationArrows), color: .pink.opacity(0.85))
+        }
+    }
+
+    /// Drops arrows of hidden bodies (e.g. the absorbed planet).
+    private func visibleArrows(_ arrows: [CanvasArrow]) -> [CanvasArrow] {
+        arrows.indices.filter(isVisible).map { arrows[$0] }
     }
 
     // MARK: - Force Lines
@@ -420,37 +456,46 @@ struct SimulationCanvasView: View {
     /// 2-body: a single source at body1 with strength mass × zoom × 0.04 (the
     /// planet's pull is negligible). 3-body: one source per body, mass-weighted
     /// relative to the heaviest body.
+    ///
+    /// Every strength is multiplied by the Advanced sheet's warp-strength setting.
     private var warpSources: [(center: CGPoint, strength: CGFloat)] {
+        let userStrength = CGFloat(display.gridWarpStrength)
         guard isThreeBody else {
             let strength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
-            return [(viewModel.body1Position, strength)]
+            return [(viewModel.body1Position, strength * userStrength)]
         }
         let masses = viewModel.bodyMasses
         let heaviest = max(masses.max() ?? 1, .leastNonzeroMagnitude)
         return zip(viewModel.bodyPositions, masses).map { position, mass in
-            (position, threeBodyWarpStrength * zoomSizeScale * CGFloat(mass / heaviest))
+            (position, threeBodyWarpStrength * zoomSizeScale * CGFloat(mass / heaviest) * userStrength)
         }
     }
 
     // MARK: - Trail Path
 
-    /// Renders an orbital trail as a series of line segments with progressive opacity.
-    /// Older trail points are more transparent, newer points are more opaque, creating
-    /// a fade-in effect that shows the direction of motion.
+    /// Number of opacity steps a trail's fade is drawn in.
+    private static let trailFadeBands = 64
+
+    /// Renders an orbital trail with progressive opacity: older points are more
+    /// transparent, newer ones more opaque, showing the direction of motion.
+    ///
+    /// The fade is drawn in up to `trailFadeBands` polylines rather than one stroke
+    /// per segment, so long trails (up to 3200 points) stay cheap to render.
     private func trailPath(points: [CGPoint], color: Color) -> some View {
         Canvas { context, _ in
-            guard points.count > 1 else { return }
-            let totalPoints = points.count
-            for i in 1..<totalPoints {
-                let opacity = Double(i) / Double(totalPoints)
-                var segment = Path()
-                segment.move(to: points[i - 1])
-                segment.addLine(to: points[i])
-                context.stroke(
-                    segment,
-                    with: .color(color.opacity(opacity)),
-                    lineWidth: 1.5
-                )
+            let segments = points.count - 1
+            guard segments > 0 else { return }
+            let bands = min(Self.trailFadeBands, segments)
+            for band in 0..<bands {
+                let start = band * segments / bands
+                let end = (band + 1) * segments / bands
+                var path = Path()
+                path.move(to: points[start])
+                for i in (start + 1)...end {
+                    path.addLine(to: points[i])
+                }
+                let opacity = Double(end) / Double(segments + 1)
+                context.stroke(path, with: .color(color.opacity(opacity)), lineWidth: 1.5)
             }
         }
     }

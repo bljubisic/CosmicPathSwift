@@ -28,13 +28,22 @@ class MockSimulationEngine: SimulationEngineProtocol {
     var isBlackHoleMode: Bool = false
     var bleedParticles: [BleedParticle] = []
     var stepCount = 0
+    /// Time step passed to the most recent `step(dt:)` call.
+    var lastDt: Double?
+    /// Physics settings the factory passed in, if any (to test the config → engine mapping).
+    let settings: EngineSettings?
 
-    init(bodies: [CelestialBody]) {
+    init(bodies: [CelestialBody], settings: EngineSettings? = nil) {
         self.bodies = bodies
+        self.settings = settings
     }
 
     func step(dt: Double) {
         stepCount += 1
+        lastDt = dt
+        // Advance coordinate time like the real engine, so diagnostics record samples.
+        metrics.elapsedTime += dt
+        systemMetrics.elapsedTime += dt
         // Move the last body slightly each step to simulate motion
         let last = bodies.count - 1
         bodies[last].position = bodies[last].position + Vector3D(x: dt, y: 0, z: 0)
@@ -443,8 +452,9 @@ struct GravitySimulationEngineTests {
             engine.step(dt: 0.01)
         }
 
-        // GR correction causes the perihelion to precess — angle must be non-zero
-        #expect(abs(engine.metrics.precessionAngle) > 0.01)
+        // GR correction makes the perihelion advance (prograde), never by ~−360° per orbit.
+        #expect(engine.metrics.precessionAngle > 0.01)
+        #expect(engine.metrics.precessionAngle < 180 * Double(max(engine.metrics.orbitsCompleted, 1)))
     }
 
     @Test func absorbedEngineStopsUpdating() {
@@ -478,7 +488,7 @@ struct GravitySimulationEngineTests {
 struct SimulationViewModelTests {
     @Test func setupCreatesEngine() {
         var engineCreated = false
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             engineCreated = true
             return MockSimulationEngine(bodies: bodies)
         }
@@ -488,7 +498,7 @@ struct SimulationViewModelTests {
     }
 
     @Test func startAndPauseToggleRunning() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -501,7 +511,7 @@ struct SimulationViewModelTests {
     }
 
     @Test func resetStopsSimulation() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -516,7 +526,7 @@ struct SimulationViewModelTests {
     /// The view is centred on the CoM, so body1 (at the origin) sits left of
     /// centre by the CoM offset m₂·d/(m₁+m₂).
     @Test func body1OffsetFromCenterByCenterOfMass() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
@@ -531,7 +541,7 @@ struct SimulationViewModelTests {
     /// Body2 starts at (separation, 0, 0). At azimuth=0 the x-axis maps directly to
     /// screen-x, so body2Position.x = centerX + (separation − comX)·scale at any elevation.
     @Test func body2PositionOffsetFromCenter() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.config.separationAU = 100.0 / CelestialConstants.baseAU
@@ -548,7 +558,7 @@ struct SimulationViewModelTests {
     /// The projection is linear, so the mass-weighted mean of the canvas positions
     /// is the projected CoM — which must stay at the canvas centre after rotation.
     @Test func rotateCameraKeepsCenterOfMassAtCanvasCenter() {
-        let vm = SimulationViewModel { bodies in
+        let vm = SimulationViewModel { bodies, _ in
             MockSimulationEngine(bodies: bodies)
         }
         vm.setup(canvasSize: CGSize(width: 400, height: 300))
