@@ -22,6 +22,9 @@ extension GravitySimulationEngine {
     /// Simulated time between bleed particles (4 default steps, ~60 ms on screen at 1×).
     static let bleedEmissionInterval: Double = 0.08
 
+    /// Fraction of the planet's mass stripped per simulated time unit at full depth.
+    static let tidalMassLossRate: Double = 0.08
+
     // MARK: - State
 
     /// Bookkeeping used only by the 2-body scenario.
@@ -72,6 +75,21 @@ extension GravitySimulationEngine {
         var lastPeriapsis: Double?
         /// Separation at the most recent apoapsis.
         var lastApoapsis: Double?
+
+        /// Bleed fade per simulated time unit: `BleedParticle.decayRate`
+        /// stretched by the time ratio, so particles live as long per orbit.
+        var bleedDecayRate: Double = BleedParticle.decayRate
+        /// Tidal mass-loss rate per simulated time unit (per unit tide fraction).
+        var tidalMassLossRate: Double = GravitySimulationEngine.tidalMassLossRate
+
+        /// Stretches the fixed simulated-time intervals by `timeRatio`
+        /// (exactly the original values at 1).
+        mutating func configureSamplers(timeRatio: Double) {
+            trailSampler = TrailSampler(interval: GravitySimulationEngine.twoBodyTrailSampleInterval * timeRatio)
+            bleedSampler = TrailSampler(interval: GravitySimulationEngine.bleedEmissionInterval * timeRatio)
+            bleedDecayRate = BleedParticle.decayRate / timeRatio
+            tidalMassLossRate = GravitySimulationEngine.tidalMassLossRate / timeRatio
+        }
     }
 
     // MARK: - Step
@@ -202,7 +220,7 @@ extension GravitySimulationEngine {
 
         let initialMass = twoBodyState.body2InitialMass
         let tideFraction = max(0.0, 1.0 - sep / rocheLimit)
-        let massLossRate = bodies[1].mass * 0.08 * tideFraction
+        let massLossRate = bodies[1].mass * twoBodyState.tidalMassLossRate * tideFraction
         let energyBefore = relativeOrbitEnergy()
         bodies[1].mass = max(bodies[1].mass - massLossRate * dt, initialMass * 0.005)
         twoBodyState.strippingEnergyChange += relativeOrbitEnergy() - energyBefore
@@ -254,7 +272,7 @@ extension GravitySimulationEngine {
             let acc = (bleedGM / (d * d * d)) * toBody1
             bleedParticles[i].velocity = bleedParticles[i].velocity + acc * dt
             bleedParticles[i].position = bleedParticles[i].position + bleedParticles[i].velocity * dt
-            bleedParticles[i].life -= BleedParticle.decayRate * dt
+            bleedParticles[i].life -= twoBodyState.bleedDecayRate * dt
             if bleedParticles[i].life <= 0 {
                 bleedParticles.remove(at: i)
             }
@@ -296,7 +314,7 @@ extension GravitySimulationEngine {
 
         if twoBodyState.wasShrinking && !isShrinking {
             twoBodyState.lastPeriapsis = min(twoBodyState.previousSeparation, currentSep)
-            let angle = atan2(r.y, r.x)
+            let angle = periapsisAngle(relativePosition: r)
             if let lastAngle = twoBodyState.lastPerihelionAngle {
                 // After one full turn the periapsis is back near the same angle, so the
                 // wrapped difference is the advance itself. Wrapping to (−π, π] keeps
@@ -309,6 +327,20 @@ extension GravitySimulationEngine {
 
         twoBodyState.wasShrinking = isShrinking
         twoBodyState.previousSeparation = currentSep
+    }
+
+    /// Periapsis direction by the scale's method: the sampled position's
+    /// atan2 (Visual) or the eccentricity vector's in-plane angle (Realistic).
+    private func periapsisAngle(relativePosition r: Vector3D) -> Double {
+        switch scale.perihelionMethod {
+        case .sampledPosition:
+            return atan2(r.y, r.x)
+        case .eccentricityVector:
+            return OrbitalElements.periapsisAngle(
+                relativePosition: r, relativeVelocity: bodies[1].velocity - bodies[0].velocity,
+                totalMass: bodies[0].mass + bodies[1].mass, constants: constants
+            )
+        }
     }
 
     // MARK: - Metrics

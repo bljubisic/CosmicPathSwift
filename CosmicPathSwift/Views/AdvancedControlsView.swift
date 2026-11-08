@@ -51,7 +51,11 @@ struct AdvancedControlsView: View {
     private var timeSection: some View {
         Section {
             accuracyPicker
-            speedPicker
+            if viewModel.config.isRealistic {
+                ratePicker
+            } else {
+                speedPicker
+            }
             stepButton
         } header: {
             Text("Time & Integration")
@@ -87,6 +91,27 @@ struct AdvancedControlsView: View {
             .pickerStyle(.segmented)
             if viewModel.isSpeedLimited {
                 Text("Limited by CPU at this accuracy and integrator")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    /// Realistic replaces the relative Speed with a real "1 s = X" rate.
+    private var ratePicker: some View {
+        captionedRow(
+            "Rate",
+            caption: "Simulated time per real second. Faster rates run more steps per frame, never larger steps."
+        ) {
+            Picker("Rate", selection: $viewModel.config.advanced.time.realisticRate) {
+                ForEach(RealTimeRate.allCases, id: \.self) { rate in
+                    Text(rate.label).tag(rate)
+                }
+            }
+            .pickerStyle(.menu)
+            if let achieved = viewModel.achievedRealTimeRate {
+                let units = viewModel.config.scale.units
+                Text("Limited by CPU: 1 s = " + RealUnitsFormatter.duration(achieved / units.secondsPerTime, units: units))
                     .font(.caption)
                     .foregroundStyle(.orange)
             }

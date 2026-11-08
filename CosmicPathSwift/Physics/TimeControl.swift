@@ -20,6 +20,9 @@ import Foundation
 /// Exact steps per frame = baseSteps / timeStepMultiplier × timeSpeed. Halving the
 /// step size doubles the step count, so on-screen speed only depends on `timeSpeed`.
 struct FrameStepPlanner {
+    /// Rendered frames per second of the simulation loop.
+    static let framesPerSecond = 60
+
     /// Absorbs floating-point error so e.g. 0.5 + 0.5 counts as a whole step.
     private static let wholeStepTolerance = 1e-9
 
@@ -38,7 +41,39 @@ struct FrameStepPlanner {
         time: TimeSettings,
         maxSteps: Int = TimeSettings.maxStepsPerFrame
     ) -> Int {
-        let exact = Self.exactSteps(baseSteps: baseSteps, time: time) + carry
+        take(Self.exactSteps(baseSteps: baseSteps, time: time), maxSteps: maxSteps)
+    }
+
+    /// Step count for one frame at a real-time rate ("1 s = X", Realistic scale):
+    /// exact steps = rate / fps / (dt × secondsPerTime). The fraction carries
+    /// over and the cap applies exactly as in `steps(baseSteps:time:maxSteps:)`.
+    ///
+    /// - Parameters:
+    ///   - rateSecondsPerSecond: Simulated seconds per real second.
+    ///   - timeStep: Integration step in simulation time units.
+    ///   - secondsPerTime: Seconds per simulation time unit.
+    mutating func steps(
+        rateSecondsPerSecond: Double,
+        timeStep: Double,
+        secondsPerTime: Double,
+        maxSteps: Int = TimeSettings.maxStepsPerFrame
+    ) -> Int {
+        let stepSeconds = timeStep * secondsPerTime
+        let exact = stepSeconds > 0 && rateSecondsPerSecond > 0
+            ? rateSecondsPerSecond / Double(Self.framesPerSecond) / stepSeconds
+            : 0
+        return take(exact, maxSteps: maxSteps)
+    }
+
+    /// Simulated seconds per real second when every frame runs `steps` steps
+    /// of `timeStep` (the rate reached when the cap limits the speed).
+    static func achievedRate(steps: Int, timeStep: Double, secondsPerTime: Double) -> Double {
+        Double(steps) * timeStep * secondsPerTime * Double(framesPerSecond)
+    }
+
+    /// Adds `exactSteps` to the carry and returns the whole steps, capped.
+    private mutating func take(_ exactSteps: Double, maxSteps: Int) -> Int {
+        let exact = exactSteps + carry
         let whole = Int((exact + Self.wholeStepTolerance).rounded(.down))
 
         if whole > maxSteps {

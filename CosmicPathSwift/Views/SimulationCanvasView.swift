@@ -454,14 +454,15 @@ struct SimulationCanvasView: View {
 
     /// Points the grid is pulled toward, with their pull strength in points.
     ///
-    /// 2-body: a single source at body1 with strength mass × zoom × 0.04 (the
-    /// planet's pull is negligible). 3-body: one source per body, mass-weighted
-    /// relative to the heaviest body.
+    /// 2-body (Visual): a single source at body1 with strength mass × zoom × 0.04
+    /// (the planet's pull is negligible). 3-body and the Realistic scale: one
+    /// source per body, mass-weighted relative to the heaviest body (Realistic
+    /// masses are ~1 in M☉, so the Visual formula would leave the grid flat).
     ///
     /// Every strength is multiplied by the Advanced sheet's warp-strength setting.
     private var warpSources: [(center: CGPoint, strength: CGFloat)] {
         let userStrength = CGFloat(display.gridWarpStrength)
-        guard isThreeBody else {
+        guard isThreeBody || viewModel.config.isRealistic else {
             let strength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
             return [(viewModel.body1Position, strength * userStrength)]
         }

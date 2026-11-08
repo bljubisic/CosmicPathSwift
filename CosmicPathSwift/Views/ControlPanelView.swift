@@ -142,9 +142,19 @@ struct ControlPanelView: View {
 
     // MARK: - Two-Body Controls
 
-    /// Black hole toggle plus mass, distance, and inclination sliders.
+    /// Black hole toggle (Visual only) plus mass, distance, and inclination sliders.
     @ViewBuilder
     private var twoBodyControls: some View {
+        // Black Hole Mode doesn't exist in the Realistic scale yet (issue #21, PR 3).
+        if !viewModel.config.isRealistic {
+            blackHoleToggle
+        }
+
+        habitableZoneToggle
+        parameterSliders
+    }
+
+    private var blackHoleToggle: some View {
         Toggle(isOn: $viewModel.config.isBlackHoleMode) {
             HStack(spacing: 6) {
                 Image(systemName: "circle.fill")
@@ -173,10 +183,10 @@ struct ControlPanelView: View {
             viewModel.config.inclinationDeg = 0.0
             viewModel.applyConfigChange(canvasSize: canvasSize)
         }
+    }
 
-        habitableZoneToggle
-
-        // Parameter sliders (mass/distance use log scale; inclination uses linear)
+    /// Mass and distance use a log scale; inclination is linear.
+    private var parameterSliders: some View {
         VStack(spacing: 8) {
             LogSlider(
                 label: viewModel.config.isBlackHoleMode ? "BH Mass" : "Star Mass",

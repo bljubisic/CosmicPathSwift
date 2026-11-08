@@ -220,6 +220,8 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Simple Orbit Simulator")
                     .font(.title2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(
@@ -250,20 +252,30 @@ struct ContentView: View {
     /// Color-coded legend showing the current mass label for each celestial body,
     /// matching the rendered body colours: star/BH orange/red and planet cyan in
     /// 2-body mode, the per-ID palette in 3-body mode.
+    ///
+    /// Entries sit side by side when they fit, otherwise one per line, so a
+    /// label never wraps (three Realistic labels like "C 0.0123 M⊕" don't fit
+    /// next to the title on a phone).
     private var massLegend: some View {
         let labels = viewModel.bodyLabels
-        return HStack(spacing: 16) {
-            ForEach(labels.indices, id: \.self) { index in
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(legendColor(for: index))
-                        .frame(width: 10, height: 10)
-                    Text(labels[index])
-                        .font(.caption)
-                }
-            }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) { legendEntries(labels) }
+            VStack(alignment: .leading, spacing: 2) { legendEntries(labels) }
         }
         .foregroundStyle(.white)
+    }
+
+    private func legendEntries(_ labels: [String]) -> some View {
+        ForEach(labels.indices, id: \.self) { index in
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(legendColor(for: index))
+                    .frame(width: 10, height: 10)
+                Text(labels[index])
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+        }
     }
 
     private func legendColor(for index: Int) -> Color {

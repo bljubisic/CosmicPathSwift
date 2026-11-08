@@ -4,7 +4,8 @@
 //
 //  CSV export of the recorded run (issue #20, PR 6). `#` comment lines
 //  describe the configuration, then one row per body per sample. All values
-//  are in the scale's simulation units (Visual: G = 500, c = 200, 1 AU = 150 px).
+//  are in the scale's simulation units (Visual: G = 500, c = 200, 1 AU = 150 px;
+//  Realistic: AU, M☉, days).
 //
 
 import CoreTransferable
@@ -48,15 +49,26 @@ enum DiagnosticsCSV {
         case .threeBody:
             fields += [("preset", config.threeBodyPreset.rawValue)]
         }
+        let scale = config.scale
         fields += [
-            ("time_step", number(config.timeStep)),
+            ("scale", config.advanced.scale.rawValue),
+            // The scenario's step in this scale's time unit (Visual: exactly `timeStep`).
+            ("time_step", number(config.timeStep * ScenarioTiming.timeRatio(config: config))),
             ("dt_multiplier", number(config.advanced.time.timeStepMultiplier)),
             ("integrator", engine.integrator.rawValue),
-            ("softening_\(config.scale.units.lengthSymbol)", number(engine.softening)),
+            ("softening_\(scale.units.lengthSymbol)", number(reportedSoftening(config: config))),
             ("collision_mode", engine.collisionMode.rawValue)
         ]
         return ["# CosmicPath diagnostics", "# units: \(config.scale.unitsDescription)"]
             + fields.map { "# \($0.0): \($0.1)" }
+    }
+
+    /// The softening as set in Visual (the picker's value) or the scale's fixed length.
+    private static func reportedSoftening(config: SimulationConfig) -> Double {
+        switch config.scale.softeningRule {
+        case .userChoice: return config.advanced.engine.softening
+        case .fixed(let length): return length
+        }
     }
 
     private static func row(sample: DiagnosticsSample, body: BodySnapshot) -> String {

@@ -31,9 +31,10 @@ struct DiagnosticsSection: View {
     @ViewBuilder
     private var driftCharts: some View {
         let points = DriftChart.points(from: viewModel.diagnostics.samples)
+        let timeUnit = viewModel.config.scale.units.timeSymbol
         CaptionedRow("Conservation", caption: driftCaption) {
-            DriftChart(title: "ΔE/E", points: points.map { ($0.time, $0.energy) })
-            DriftChart(title: "ΔL/L", points: points.map { ($0.time, $0.angularMomentum) })
+            DriftChart(title: "ΔE/E", timeUnit: timeUnit, points: points.map { ($0.time, $0.energy) })
+            DriftChart(title: "ΔL/L", timeUnit: timeUnit, points: points.map { ($0.time, $0.angularMomentum) })
         }
     }
 
@@ -55,7 +56,7 @@ struct DiagnosticsSection: View {
                 HStack {
                     valueColumn("a", elements.isBound ? Self.au(elements.semiMajorAxis, scale: viewModel.config.scale) : "unbound")
                     valueColumn("e", String(format: "%.3f", elements.eccentricity))
-                    valueColumn("T", elements.period.map { String(format: "%.1f", $0) } ?? "—")
+                    valueColumn("T", elements.period.map(periodText) ?? "—")
                 }
             } else {
                 Text("—").foregroundStyle(.secondary)
@@ -63,7 +64,23 @@ struct DiagnosticsSection: View {
         }
     }
 
+    /// Period: plain simulation units in Visual, days or years in Realistic.
+    private func periodText(_ period: Double) -> String {
+        let config = viewModel.config
+        guard config.isRealistic else { return String(format: "%.1f", period) }
+        return RealUnitsFormatter.duration(period, units: config.scale.units)
+    }
+
+    @ViewBuilder
     private var precessionRow: some View {
+        if viewModel.config.isRealistic {
+            realisticPrecessionRow
+        } else {
+            visualPrecessionRow
+        }
+    }
+
+    private var visualPrecessionRow: some View {
         CaptionedRow(
             "Precession per Orbit",
             caption: "6πGM/(c²a(1−e²)) is the weak-field formula. With the app's strong GR, the next-order term adds about (18+e²)/4 · GM/(c²p): roughly 8% at 1 AU. Widen the orbit to see them converge."
@@ -73,6 +90,33 @@ struct DiagnosticsSection: View {
                     valueColumn("Measured", String(format: "%.2f°", comparison.measuredPerOrbit))
                     valueColumn("Predicted", String(format: "%.2f°", comparison.predictedPerOrbit))
                     valueColumn("Ratio", String(format: "×%.3f", comparison.ratio))
+                }
+            } else {
+                Text("— (after the first full orbit)").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Realistic: arcseconds per orbit and per century, measured next to GR's prediction.
+    private var realisticPrecessionRow: some View {
+        CaptionedRow(
+            "Precession",
+            caption: "GR predicts 6πGM/(c²a(1−e²)): Mercury's 0.1″ per orbit, 43″ per century. Every integrator also precesses the orbit by itself, and at the default accuracy that hides GR (Verlet: degrees per century). Yoshida 4 at Accuracy ×¼ measures it to about 1%."
+        ) {
+            if let comparison = viewModel.precessionComparison {
+                let units = viewModel.config.scale.units
+                let period = viewModel.orbitalElements?.period
+                HStack {
+                    valueColumn("Measured", RealUnitsFormatter.arcseconds(degrees: comparison.measuredPerOrbit) + "/orbit")
+                    valueColumn("Predicted", RealUnitsFormatter.arcseconds(degrees: comparison.predictedPerOrbit) + "/orbit")
+                    valueColumn("Ratio", String(format: "×%.3g", comparison.ratio))
+                }
+                HStack {
+                    valueColumn("", RealUnitsFormatter.perCentury(
+                        degreesPerOrbit: comparison.measuredPerOrbit, period: period, units: units))
+                    valueColumn("", RealUnitsFormatter.perCentury(
+                        degreesPerOrbit: comparison.predictedPerOrbit, period: period, units: units))
+                    Spacer().frame(maxWidth: .infinity)
                 }
             } else {
                 Text("— (after the first full orbit)").foregroundStyle(.secondary)
@@ -117,6 +161,8 @@ struct DiagnosticsSection: View {
 /// to read the value at a time; otherwise the latest value is shown.
 private struct DriftChart: View {
     let title: String
+    /// Unit of the time axis ("days"), or empty for Visual's simulation units.
+    let timeUnit: String
     let points: [(time: Double, value: Double)]
 
     @State private var selectedTime: Double?
@@ -144,7 +190,7 @@ private struct DriftChart: View {
                 Text(title).font(.subheadline)
                 Spacer()
                 if let readout {
-                    Text(String(format: "%.3g  at t = %.1f", readout.value, readout.time))
+                    Text(String(format: "%.3g  at t = %.1f", readout.value, readout.time) + timeSuffix)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -152,6 +198,8 @@ private struct DriftChart: View {
             chart
         }
     }
+
+    private var timeSuffix: String { timeUnit.isEmpty ? "" : " " + timeUnit }
 
     private var chart: some View {
         Chart {
@@ -178,6 +226,7 @@ private struct DriftChart: View {
                 AxisValueLabel()
             }
         }
+        .chartXAxisLabel(timeUnit.isEmpty ? "t" : "t (\(timeUnit))", alignment: .trailing)
         .frame(height: 90)
         .accessibilityLabel("\(title) against time")
     }

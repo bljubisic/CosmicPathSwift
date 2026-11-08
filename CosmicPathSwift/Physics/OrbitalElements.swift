@@ -36,6 +36,9 @@ struct OrbitalElements: Equatable, Sendable {
     let eccentricity: Double
     /// Orbital period 2π√(a³/GM); nil when the orbit is unbound.
     let period: Double?
+    /// Direction of the periapsis (the eccentricity vector) in the orbital
+    /// plane, in radians, measured from `OrbitalPlane.referenceAxis`.
+    let periapsisAngle: Double
 
     /// True for a closed (elliptical) orbit.
     var isBound: Bool { period != nil }
@@ -53,14 +56,71 @@ struct OrbitalElements: Equatable, Sendable {
         let mu = constants.G * totalMass
         let distance = r.magnitude
         guard mu > 0, distance > 0 else {
-            return OrbitalElements(semiMajorAxis: .infinity, eccentricity: .infinity, period: nil)
+            return OrbitalElements(semiMajorAxis: .infinity, eccentricity: .infinity, period: nil, periapsisAngle: 0)
         }
         let speedSquared = v.magnitudeSquared
         let specificEnergy = 0.5 * speedSquared - mu / distance
         let semiMajorAxis = -mu / (2 * specificEnergy)
-        let eVector = (r * (speedSquared - mu / distance) - v * r.dot(v)) * (1 / mu)
+        let eVector = eccentricityVector(r: r, v: v, mu: mu)
         let period = specificEnergy < 0 ? 2 * .pi * sqrt(pow(semiMajorAxis, 3) / mu) : nil
-        return OrbitalElements(semiMajorAxis: semiMajorAxis, eccentricity: eVector.magnitude, period: period)
+        return OrbitalElements(
+            semiMajorAxis: semiMajorAxis, eccentricity: eVector.magnitude, period: period,
+            periapsisAngle: OrbitalPlane(normal: r.cross(v)).angle(of: eVector)
+        )
+    }
+
+    /// e = ((v² − μ/r) r − (r·v) v) / μ, pointing at the periapsis.
+    static func eccentricityVector(r: Vector3D, v: Vector3D, mu: Double) -> Vector3D {
+        (r * (v.magnitudeSquared - mu / r.magnitude) - v * r.dot(v)) * (1 / mu)
+    }
+
+    /// Periapsis direction of the relative state in its orbital plane, in radians.
+    ///
+    /// Unlike the planet's position at a sampled separation minimum, the
+    /// eccentricity vector changes smoothly, so successive values resolve
+    /// precession far below one step's angle (Realistic: 0.1″ per orbit).
+    static func periapsisAngle(
+        relativePosition r: Vector3D,
+        relativeVelocity v: Vector3D,
+        totalMass: Double,
+        constants: PhysicalConstants
+    ) -> Double {
+        let mu = constants.G * totalMass
+        guard mu > 0, r.magnitude > 0 else { return 0 }
+        return OrbitalPlane(normal: r.cross(v)).angle(of: eccentricityVector(r: r, v: v, mu: mu))
+    }
+}
+
+// MARK: - OrbitalPlane
+
+/// In-plane angles for an orbit with angular-momentum direction `normal`.
+///
+/// The reference axis is x̂ projected into the plane (ŷ if the plane is
+/// perpendicular to x̂). The app's orbits are inclined about x̂, so x̂ lies in
+/// the plane and angles match atan2(y, x) for flat orbits.
+struct OrbitalPlane {
+    /// In-plane axis at angle 0.
+    let referenceAxis: Vector3D
+    /// In-plane axis at angle π/2 (normal × referenceAxis).
+    let perpendicularAxis: Vector3D
+
+    /// Below this |x̂ × n̂|, x̂ is too close to the normal to project.
+    private static let degenerateTolerance = 1e-9
+
+    init(normal: Vector3D) {
+        let n = normal.normalized
+        let x = Vector3D(x: 1, y: 0, z: 0)
+        let projected = x - n * x.dot(n)
+        let reference = projected.magnitude > Self.degenerateTolerance
+            ? projected.normalized
+            : Vector3D(x: 0, y: 1, z: 0)
+        referenceAxis = n == .zero ? x : reference
+        perpendicularAxis = n == .zero ? Vector3D(x: 0, y: 1, z: 0) : n.cross(referenceAxis)
+    }
+
+    /// Angle of `vector`'s in-plane component, in (−π, π].
+    func angle(of vector: Vector3D) -> Double {
+        atan2(vector.dot(perpendicularAxis), vector.dot(referenceAxis))
     }
 }
 

@@ -50,6 +50,9 @@ enum InitialConditions {
     /// Units for each preset (see file header for how they were chosen).
     static func units(for preset: ThreeBodyPreset, config: SimulationConfig) -> PresetUnits {
         let constants = config.scale.constants
+        if config.isRealistic {
+            return realisticUnits(for: preset, config: config)
+        }
         switch preset {
         case .figureEight, .lagrangeTriangle:
             return PresetUnits(length: 150, mass: 25, constants: constants)
@@ -61,6 +64,27 @@ enum InitialConditions {
             return PresetUnits(length: config.scale.au, mass: SunPlanetMoon.starMass, constants: constants)
         }
     }
+
+    /// Realistic units: 1 AU (× spread for Custom) and 1 M☉ per preset mass
+    /// unit. Pythagorean uses 10 AU: its closest pass (0.0097 L = 0.097 AU)
+    /// then stays outside the 4 and 5 M☉ stars' combined radius (0.031 AU).
+    private static func realisticUnits(for preset: ThreeBodyPreset, config: SimulationConfig) -> PresetUnits {
+        let scale = config.scale
+        let constants = scale.constants
+        switch preset {
+        case .figureEight, .lagrangeTriangle, .sunPlanetMoon:
+            return PresetUnits(length: scale.au, mass: scale.solarMass, constants: constants)
+        case .custom:
+            return PresetUnits(length: scale.au * config.customSpreadAU, mass: scale.solarMass, constants: constants)
+        case .pythagorean:
+            return PresetUnits(
+                length: realisticPythagoreanLengthAU * scale.au, mass: scale.solarMass, constants: constants
+            )
+        }
+    }
+
+    /// Length unit of the Realistic Pythagorean preset, in AU.
+    static let realisticPythagoreanLengthAU: Double = 10
 
     // MARK: - Two-Body
 
@@ -178,9 +202,14 @@ enum InitialConditions {
         return sqrt(numerator / denominator) / rp
     }
 
-    /// Closest allowed starting distance: twice the configured softening length.
+    /// Closest allowed starting distance: twice the softening length.
     static func minimumStartDistance(config: SimulationConfig) -> Double {
-        2 * config.advanced.engine.effectiveSoftening
+        2 * softening(config: config)
+    }
+
+    /// Softening length the engine will use for `config`.
+    static func softening(config: SimulationConfig) -> Double {
+        config.scale.softening(for: config.advanced.engine)
     }
 
     /// Starting (periapsis) distance a(1 − e), never below twice the softening length.
@@ -244,7 +273,7 @@ enum InitialConditions {
         let roche = scale.rocheLimit(centralMass: config.simulationMass1, planetMass: config.simulationMass2)
         if isBlackHole && r <= rs { return .eventHorizon }
         let surface = scale.starSurfaceRadius(
-            mass: config.simulationMass1, softening: config.advanced.engine.effectiveSoftening
+            mass: config.simulationMass1, softening: softening(config: config)
         )
         if !config.isBlackHoleMode && r <= surface {
             return .starSurface
@@ -277,7 +306,7 @@ enum InitialConditions {
         case .pythagorean:
             bodies = pythagorean(units: units)
         case .sunPlanetMoon:
-            bodies = SunPlanetMoon.bodies()
+            bodies = config.isRealistic ? SunEarthMoon.bodies(scale: config.scale) : SunPlanetMoon.bodies()
         }
         let framed = NBodyGravity.centerOfMassFrame(bodies)
         let epsilon = applyingNudge ? config.advanced.initial.chaosEpsilon : 0
@@ -491,7 +520,7 @@ enum InitialConditions {
         }
 
         /// GR-corrected circular speed √(GM / (r − 3GM/c²)) for the app's force law.
-        private static func circularSpeed(
+        static func circularSpeed(
             mass: Double, radius: Double, constants: PhysicalConstants = .visual
         ) -> Double {
             let gm = constants.G * mass

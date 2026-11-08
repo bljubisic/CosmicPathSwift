@@ -69,6 +69,7 @@ class SimulationViewModel {
         didSet {
             let needsRestart = config.advanced.initial != oldValue.advanced.initial
                 || config.advanced.engine != oldValue.advanced.engine
+                || config.advanced.scale != oldValue.advanced.scale
             if needsRestart, isSetup {
                 // Starting conditions and physics settings only take effect at
                 // setup, so restart with them (the sheet only allows editing them
@@ -111,10 +112,23 @@ class SimulationViewModel {
     /// `TimeSettings.maxStepsPerFrame`, so the simulation runs slower than asked.
     private(set) var isSpeedLimited: Bool = false
 
-    /// Integration step actually used: the scenario's `timeStep` scaled by the
-    /// Accuracy multiplier from the Advanced sheet.
+    /// Scenario time unit ÷ the Visual one, fixed at setup (`ScenarioTiming.timeRatio`).
+    /// Exactly 1 in the Visual scale.
+    private(set) var timeRatio: Double = 1
+
+    /// Integration step actually used: the scenario's `timeStep`, converted to
+    /// the scale's time unit and scaled by the Accuracy multiplier.
     var effectiveTimeStep: Double {
-        config.timeStep * config.advanced.time.timeStepMultiplier
+        config.timeStep * timeRatio * config.advanced.time.timeStepMultiplier
+    }
+
+    /// Simulated seconds per real second actually reached in the Realistic
+    /// scale while the step cap limits the speed; nil otherwise.
+    var achievedRealTimeRate: Double? {
+        guard config.isRealistic, isSpeedLimited else { return nil }
+        return FrameStepPlanner.achievedRate(
+            steps: lastStepCap, timeStep: effectiveTimeStep, secondsPerTime: config.scale.units.secondsPerTime
+        )
     }
 
     /// Screen recording state and the finished clip awaiting share/save.
@@ -214,8 +228,15 @@ class SimulationViewModel {
 
     /// Legend label for each body: slider labels in 2-body mode, otherwise the
     /// body letter and its mass in preset units (e.g. "A 3", "B 4", "C 5").
+    /// In Realistic 3-body mode the masses are real, so they get real units
+    /// (e.g. "A 1 M☉", "B 1 M⊕", "C 0.0123 M⊕").
     var bodyLabels: [String] {
         guard isThreeBodyMode else { return [config.mass1Label, config.mass2Label] }
+        if config.isRealistic {
+            return zip(bodyIDs, bodyMasses).map { id, mass in
+                "\(SystemMetrics.letter(for: id)) \(RealUnitsFormatter.mass(mass, scale: config.scale))"
+            }
+        }
         return zip(bodyIDs, bodyMassMultipliers).map { id, multiplier in
             "\(SystemMetrics.letter(for: id)) \(String(format: "%.3g", multiplier))"
         }
@@ -257,6 +278,9 @@ class SimulationViewModel {
     /// Turns the speed and accuracy multipliers into whole steps per frame.
     private var stepPlanner = FrameStepPlanner()
 
+    /// Step cap of the most recent frame, for `achievedRealTimeRate`.
+    private var lastStepCap = TimeSettings.maxStepsPerFrame
+
     /// Unperturbed copy of the 3-body system for the chaos experiment, if enabled.
     private var chaosTwin: ChaosTwin?
 
@@ -276,7 +300,9 @@ class SimulationViewModel {
 
     init(
         engineFactory: @escaping EngineFactory = { setup in
-            GravitySimulationEngine(bodies: setup.bodies, settings: setup.settings, scale: setup.scale)
+            GravitySimulationEngine(
+                bodies: setup.bodies, settings: setup.settings, scale: setup.scale, timeRatio: setup.timeRatio
+            )
         }
     ) {
         self.engineFactory = engineFactory
@@ -308,6 +334,7 @@ class SimulationViewModel {
         }
 
         let scale = config.scale
+        timeRatio = ScenarioTiming.timeRatio(config: config)
         let initialExtent = zoom.reset(for: bodies, fallbackExtent: scale.au)
         transformer = makeTransformer()
         vectorDynamicalTime = VectorOverlay.dynamicalTime(
@@ -331,7 +358,7 @@ class SimulationViewModel {
         isRunning = true
         simulationTask = Task { [weak self] in
             let clock = ContinuousClock()
-            let frameDuration = Duration.milliseconds(1000 / 60)
+            let frameDuration = Duration.milliseconds(1000 / FrameStepPlanner.framesPerSecond)
             while !Task.isCancelled {
                 self?.tick()
                 try? await clock.sleep(for: frameDuration)
@@ -395,6 +422,23 @@ class SimulationViewModel {
     /// standard ones (see `config.didSet`); otherwise the run is left alone.
     func restoreAdvancedDefaults() {
         config.advanced = AdvancedSettings()
+    }
+
+    /// Switches between the Visual and Realistic scales and restarts (see
+    /// `config.didSet`). Black Hole Mode doesn't exist in Realistic yet, so
+    /// switching to Realistic turns it off and restores the normal slider defaults.
+    func selectScale(_ scale: PhysicsScale) {
+        guard scale != config.advanced.scale else { return }
+        var updated = config
+        updated.advanced.scale = scale
+        if scale == .realistic, updated.isBlackHoleMode {
+            let defaults = SimulationConfig()
+            updated.isBlackHoleMode = false
+            updated.mass1Multiplier = defaults.mass1Multiplier
+            updated.separationAU = defaults.separationAU
+            updated.inclinationDeg = defaults.inclinationDeg
+        }
+        config = updated
     }
 
     /// Shows or hides the habitable zone. Only affects rendering, so it works
@@ -485,7 +529,7 @@ class SimulationViewModel {
 
     /// Everything the engine factory needs for `bodies` under the current config.
     private func engineSetup(for bodies: [CelestialBody]) -> EngineSetup {
-        EngineSetup(bodies: bodies, settings: config.advanced.engine, scale: config.scale)
+        EngineSetup(bodies: bodies, settings: config.advanced.engine, scale: config.scale, timeRatio: timeRatio)
     }
 
     // MARK: - Simulation Loop
@@ -505,7 +549,16 @@ class SimulationViewModel {
         let cap = FrameStepPlanner.stepCap(
             integrator: config.advanced.engine.integrator, engineCount: chaosTwin == nil ? 1 : 2
         )
-        let steps = stepPlanner.steps(baseSteps: config.stepsPerFrame, time: config.advanced.time, maxSteps: cap)
+        lastStepCap = cap
+        let steps: Int
+        if config.isRealistic {
+            steps = stepPlanner.steps(
+                rateSecondsPerSecond: config.advanced.time.realisticRate.simulatedSecondsPerSecond,
+                timeStep: effectiveTimeStep, secondsPerTime: config.scale.units.secondsPerTime, maxSteps: cap
+            )
+        } else {
+            steps = stepPlanner.steps(baseSteps: config.stepsPerFrame, time: config.advanced.time, maxSteps: cap)
+        }
         updateSpeedLimited()
         return steps
     }

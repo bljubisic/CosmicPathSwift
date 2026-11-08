@@ -47,6 +47,9 @@ struct UnitSystem: Equatable, Sendable {
     let secondsPerTime: Double
     /// Symbol shown next to raw simulation lengths ("px", "AU", "GM/c²").
     let lengthSymbol: String
+    /// Name of the simulation time unit ("days"), or empty when it has no
+    /// everyday meaning (Visual's time unit).
+    var timeSymbol: String = ""
 }
 
 // MARK: - Rules
@@ -72,17 +75,24 @@ enum PlanetRadiusRule: Equatable, Sendable {
     /// A fixed proxy radius. The Roche limit floors the planet mass at
     /// `massFloor`, so a stripped planet's limit can't grow without bound.
     case fixedProxy(radius: Double, massFloor: Double)
+    /// R = R⊕ × (m / M⊕)^exponent, the rocky-planet mass–radius relation.
+    /// Masses below `massFloor` use the floor, like `fixedProxy`.
+    case massPower(radiusAtEarthMass: Double, earthMass: Double, exponent: Double, massFloor: Double)
 
     /// Smallest planet mass used in the Roche limit's (2M/m)^⅓.
     var rocheMassFloor: Double {
         switch self {
         case .fixedProxy(_, let massFloor): return massFloor
+        case .massPower(_, _, _, let massFloor): return massFloor
         }
     }
 
     func radius(planetMass: Double) -> Double {
         switch self {
-        case .fixedProxy(let radius, _): return radius
+        case .fixedProxy(let radius, _):
+            return radius
+        case .massPower(let radiusAtEarthMass, let earthMass, let exponent, let massFloor):
+            return radiusAtEarthMass * pow(max(planetMass, massFloor) / earthMass, exponent)
         }
     }
 }
@@ -91,12 +101,52 @@ enum PlanetRadiusRule: Equatable, Sendable {
 enum StarRadiusRule: Equatable, Sendable {
     /// max(2 rₛ, 2 × softening): grows with mass, never below the softening.
     case schwarzschildOrSoftening
+    /// R = R☉ × (M / M☉)^exponent, the main-sequence mass–radius relation.
+    case massPower(radiusAtSolarMass: Double, solarMass: Double, exponent: Double)
 
     func radius(mass: Double, schwarzschildRadius rs: Double, softening: Double) -> Double {
         switch self {
-        case .schwarzschildOrSoftening: return max(2.0 * rs, softening * 2)
+        case .schwarzschildOrSoftening:
+            return max(2.0 * rs, softening * 2)
+        case .massPower(let radiusAtSolarMass, let solarMass, let exponent):
+            return radiusAtSolarMass * pow(max(mass, 0) / solarMass, exponent)
         }
     }
+
+    /// True when the radius is a physical size, so two bodies touch when the
+    /// sum of their radii is reached (rather than the larger of the two).
+    var isPhysicalSize: Bool {
+        switch self {
+        case .schwarzschildOrSoftening: return false
+        case .massPower: return true
+        }
+    }
+}
+
+/// Where the force-law softening length comes from.
+enum SofteningRule: Equatable, Sendable {
+    /// The Advanced sheet's Softening picker, never below `minimum`.
+    case userChoice(minimum: Double)
+    /// A fixed length; the picker is hidden.
+    case fixed(Double)
+
+    func length(for settings: EngineSettings) -> Double {
+        switch self {
+        case .userChoice(let minimum): return max(settings.softening, minimum)
+        case .fixed(let length): return length
+        }
+    }
+}
+
+/// How the 2-body precession tracker measures the periapsis direction.
+enum PerihelionMethod: Equatable, Sendable {
+    /// atan2 of the planet's position at the sampled separation minimum.
+    /// Quantised by the step (≈ 0.2° at 1,800 steps per orbit), which is fine
+    /// when GR precession is degrees per orbit.
+    case sampledPosition
+    /// Direction of the eccentricity vector at that sample. It changes smoothly,
+    /// so it resolves the 0.1″ per orbit of real GR.
+    case eccentricityVector
 }
 
 // MARK: - ScaleProfile
@@ -120,11 +170,18 @@ struct ScaleProfile: Equatable, Sendable {
     let blackHoleRule: BlackHoleRule
     let planetRadius: PlanetRadiusRule
     let starRadius: StarRadiusRule
+    let softeningRule: SofteningRule
+    let perihelionMethod: PerihelionMethod
 
     /// Short description of the units, for the diagnostics CSV header.
     let unitsDescription: String
 
     // MARK: Derived rules
+
+    /// Softening length the engine uses with `settings` in this scale.
+    func softening(for settings: EngineSettings) -> Double {
+        softeningRule.length(for: settings)
+    }
 
     /// Radius at which an orbiting body hits a star of `mass`.
     func starSurfaceRadius(mass: Double, softening: Double) -> Double {
@@ -138,10 +195,12 @@ struct ScaleProfile: Equatable, Sendable {
             * pow(2.0 * centralMass / max(planetMass, planetRadius.rocheMassFloor), 1.0 / 3.0)
     }
 
-    /// Distance at which two 3-body stars merge: the larger of their surface radii.
+    /// Distance at which two 3-body stars merge. Visual: the larger of their
+    /// surface radii. Physical radii: their sum, i.e. the stars touch.
     func collisionDistance(massA: Double, massB: Double, softening: Double) -> Double {
-        max(starSurfaceRadius(mass: massA, softening: softening),
-            starSurfaceRadius(mass: massB, softening: softening))
+        let radiusA = starSurfaceRadius(mass: massA, softening: softening)
+        let radiusB = starSurfaceRadius(mass: massB, softening: softening)
+        return starRadius.isPhysicalSize ? radiusA + radiusB : max(radiusA, radiusB)
     }
 
     // MARK: Profiles
@@ -167,6 +226,8 @@ struct ScaleProfile: Equatable, Sendable {
             blackHoleRule: .minimumRadius(8),
             planetRadius: .fixedProxy(radius: 10, massFloor: 0.1),
             starRadius: .schwarzschildOrSoftening,
+            softeningRule: .userChoice(minimum: EngineSettings.minimumSoftening),
+            perihelionMethod: .sampledPosition,
             unitsDescription: "simulation (G = 500, c = 200, 1 AU = 150 px)"
         )
     }()
@@ -188,4 +249,12 @@ enum SIConstants {
     static let julianYear: Double = 365.25 * 86_400
     static let gravitationalConstant: Double = 6.67430e-11
     static let speedOfLight: Double = 299_792_458
+    static let secondsPerDay: Double = 86_400
+    /// Days in a Julian century, the unit of published precession rates.
+    static let daysPerJulianCentury: Double = 36_525
+    /// Gaussian gravitational constant k, in AU^1.5 / (M☉^0.5 · day).
+    static let gaussianGravitationalConstant: Double = 0.01720209895
+    static let solarRadius: Double = 6.957e8
+    static let earthRadius: Double = 6.3781e6
+    static let kilometer: Double = 1_000
 }

@@ -533,8 +533,11 @@ struct SimulationConfig: Equatable {
     // MARK: - Derived Simulation Values
 
     /// Physics scale the simulation runs in: constants, slider-unit conversions
-    /// and size rules. Always Visual until the Realistic scale exists (issue #21).
-    var scale: ScaleProfile { .visual }
+    /// and size rules, as chosen in the Advanced sheet (issue #21).
+    var scale: ScaleProfile { advanced.scale.profile }
+
+    /// True when running in the Realistic scale.
+    var isRealistic: Bool { advanced.scale == .realistic }
 
     /// The simulation mass for body 1 (central body).
     var simulationMass1: Double {
@@ -628,6 +631,9 @@ struct AdvancedSettings: Equatable, Codable, Sendable {
     /// `UserDefaults` key for the opt-in that shows the Advanced button.
     static let optInStorageKey = "advancedMode"
 
+    /// Physics scale (Visual or Realistic). Changing it restarts the setup.
+    var scale: PhysicsScale = .visual
+
     /// Rendering-only options. They take effect immediately, even while running.
     var display = DisplaySettings()
 
@@ -660,6 +666,10 @@ struct TimeSettings: Equatable, Codable, Sendable {
     /// How fast simulated time runs relative to normal.
     /// Achieved with more steps per frame, never larger steps, so accuracy is unchanged.
     var timeSpeed: Double = 1
+
+    /// Simulated time per real second in the Realistic scale, which replaces
+    /// `timeSpeed` there.
+    var realisticRate: RealTimeRate = .oneMonth
 
     /// Values offered by the Accuracy picker.
     static let timeStepChoices: [Double] = [0.25, 0.5, 1, 2]

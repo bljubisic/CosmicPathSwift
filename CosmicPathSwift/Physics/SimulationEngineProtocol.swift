@@ -126,6 +126,10 @@ struct EngineSetup {
     let settings: EngineSettings
     /// Constants, units and size rules of the physics scale.
     let scale: ScaleProfile
+    /// Scenario time unit ÷ the Visual one (`ScenarioTiming.timeRatio`). Fixed
+    /// intervals of simulated time (2-body trail spacing, bleed emission and
+    /// fade) are multiplied by it. 1 in the Visual scale.
+    var timeRatio: Double = 1
 }
 
 // MARK: - GravitySimulationEngine
@@ -161,7 +165,7 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
     static let cSquared: Double = ScaleProfile.visual.constants.cSquared  // 40,000
 
     /// Default softening length of the Visual scale. Each engine uses
-    /// `settings.effectiveSoftening`, which the Advanced sheet can change.
+    /// `softeningLength`, which the Advanced sheet can change in Visual.
     static let softening: Double = ScaleProfile.visual.defaultSoftening
 
     /// Visual-scale threshold for black hole classification: body1 is a black
@@ -203,21 +207,32 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
     /// G and c of `scale`.
     var constants: PhysicalConstants { scale.constants }
 
-    /// Softening length used everywhere in this engine (never below the safety floor).
-    var softeningLength: Double { settings.effectiveSoftening }
+    /// Scenario time unit ÷ the Visual one; scales fixed simulated-time intervals.
+    let timeRatio: Double
+
+    /// Softening length used everywhere in this engine: the Advanced setting
+    /// (never below the safety floor) in Visual, fixed in Realistic.
+    var softeningLength: Double { scale.softening(for: settings) }
 
     /// - Precondition: `bodies` must not be empty.
-    init(bodies: [CelestialBody], settings: EngineSettings = EngineSettings(), scale: ScaleProfile = .visual) {
+    init(
+        bodies: [CelestialBody],
+        settings: EngineSettings = EngineSettings(),
+        scale: ScaleProfile = .visual,
+        timeRatio: Double = 1
+    ) {
         precondition(!bodies.isEmpty, "GravitySimulationEngine needs at least one body")
-        let softening = settings.effectiveSoftening
+        let softening = scale.softening(for: settings)
         let initial = NBodyGravity.withAccelerations(bodies, softening: softening, constants: scale.constants)
         self.bodies = initial
         self.settings = settings
         self.scale = scale
+        self.timeRatio = timeRatio > 0 ? timeRatio : 1
         self.isTwoBodyScenario = initial.count == 2
         self.nBodyState = NBodyState(bodies: initial, softening: softening, constants: scale.constants)
 
         if isTwoBodyScenario {
+            twoBodyState.configureSamplers(timeRatio: self.timeRatio)
             twoBodyState.body2InitialMass = initial[1].mass
             twoBodyState.previousSeparation = (initial[1].position - initial[0].position).magnitude
             recordInitialInvariants()
