@@ -102,14 +102,11 @@ struct MetricsPanelView: View {
             )
             Spacer()
             // Context-dependent fourth metric:
-            // Black hole mode → Schwarzschild radius in simulation pixels
+            // Black hole mode → Schwarzschild radius (simulation units, or km in Realistic)
             // Normal mode → Lorentz factor γ = 1/√(1 - v²/c²)
             if viewModel.metrics.isBlackHole {
-                metricItem(
-                    label: "r\u{209B} (\(viewModel.config.scale.units.lengthSymbol))",
-                    value: String(format: "%.1f", viewModel.metrics.schwarzschildRadius),
-                    color: .red
-                )
+                let rs = text.schwarzschildRadius(metrics)
+                metricItem(label: rs.label, value: rs.value, color: .red)
             } else {
                 metricItem(label: lorentz.label, value: lorentz.value, color: .purple)
             }

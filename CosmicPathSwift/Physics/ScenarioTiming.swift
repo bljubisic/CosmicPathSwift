@@ -46,6 +46,7 @@ enum ScenarioTiming {
     /// the Visual scale is untouched.
     static func timeRatio(config: SimulationConfig) -> Double {
         guard config.advanced.scale != .visual else { return 1 }
+        if config.isStrongField { return strongFieldTimeRatio(config: config) }
         var visualConfig = config
         visualConfig.advanced.scale = .visual
         visualConfig.isBlackHoleMode = false
@@ -54,6 +55,18 @@ enum ScenarioTiming {
 
         let scaled = referenceTime(bodies: initialBodies(config: scaledConfig), constants: config.scale.constants)
         let visual = referenceTime(bodies: initialBodies(config: visualConfig), constants: ScaleProfile.visual.constants)
+        guard scaled > 0, visual > 0 else { return 1 }
+        return scaled / visual
+    }
+
+    /// Strong field has no matching Visual scenario, so its baseline is the
+    /// Visual default 2-body orbit (same Advanced starting conditions). The
+    /// ratio keeps Visual's steps per orbit: ≈ 10 µs per step at 8 rₛ around 10 M☉.
+    private static func strongFieldTimeRatio(config: SimulationConfig) -> Double {
+        var baseline = SimulationConfig()
+        baseline.advanced.initial = config.advanced.initial
+        let scaled = referenceTime(bodies: initialBodies(config: config), constants: config.scale.constants)
+        let visual = referenceTime(bodies: initialBodies(config: baseline), constants: ScaleProfile.visual.constants)
         guard scaled > 0, visual > 0 else { return 1 }
         return scaled / visual
     }

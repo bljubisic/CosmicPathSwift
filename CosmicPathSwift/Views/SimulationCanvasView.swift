@@ -525,6 +525,12 @@ struct SimulationCanvasView: View {
                         Text("r\u{209B} = 2GM/c\u{00B2}  r\u{209A}\u{2095} = 1.5r\u{209B}")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.red.opacity(0.3))
+                        if viewModel.config.isStrongField {
+                            // Rings and horizon are at true scale; the disk is decoration.
+                            Text("accretion disk illustrative")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.red.opacity(0.25))
+                        }
                     } else {
                         Text("a = -GM/r\u{00B2} - 3GML\u{00B2}/c\u{00B2}r\u{2074}")
                             .font(.system(size: 10, design: .monospaced))
@@ -581,11 +587,12 @@ struct SimulationCanvasView: View {
     /// Zoom-based size multiplier for celestial bodies.
     /// At the default separation (1 AU), this is 1.0. As the distance increases
     /// and the view zooms out, bodies shrink proportionally (clamped to 40%-100%)
-    /// so they don't dominate the canvas at high zoom-out levels.
+    /// so they don't dominate the canvas at high zoom-out levels. In strong field
+    /// the reference is the orbit itself, since 1 AU there is 10⁸ length units.
     private var zoomSizeScale: CGFloat {
         // coordinateScale is inversely proportional to the viewed extent.
-        // Compute the reference scale at default 1 AU separation.
-        let referenceExtent = viewModel.config.scale.au * CelestialConstants.orbitMarginFactor
+        // Compute the reference scale at the reference separation.
+        let referenceExtent = viewModel.config.bodySizeReferenceLength * CelestialConstants.orbitMarginFactor
         let minDim = max(min(canvasSize.width, canvasSize.height), 1) // guard against zero
         let halfCanvas = minDim * 0.40
         let referenceScale = halfCanvas / referenceExtent

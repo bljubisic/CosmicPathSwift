@@ -425,20 +425,17 @@ class SimulationViewModel {
     }
 
     /// Switches between the Visual and Realistic scales and restarts (see
-    /// `config.didSet`). Black Hole Mode doesn't exist in Realistic yet, so
-    /// switching to Realistic turns it off and restores the normal slider defaults.
+    /// `config.didSet`). Black Hole Mode stays on: in Realistic it selects the
+    /// strong-field setup (geometric units, BH mass in M☉, distance in rₛ).
     func selectScale(_ scale: PhysicsScale) {
         guard scale != config.advanced.scale else { return }
-        var updated = config
-        updated.advanced.scale = scale
-        if scale == .realistic, updated.isBlackHoleMode {
-            let defaults = SimulationConfig()
-            updated.isBlackHoleMode = false
-            updated.mass1Multiplier = defaults.mass1Multiplier
-            updated.separationAU = defaults.separationAU
-            updated.inclinationDeg = defaults.inclinationDeg
-        }
-        config = updated
+        config.advanced.scale = scale
+    }
+
+    /// "1 s = X" rate the Realistic scale runs at: the strong-field rate in
+    /// Black Hole Mode, the planetary rate otherwise.
+    var activeRealTimeRate: RealTimeRate {
+        config.advanced.time.activeRate(strongField: config.isStrongField)
     }
 
     /// Shows or hides the habitable zone. Only affects rendering, so it works
@@ -553,7 +550,7 @@ class SimulationViewModel {
         let steps: Int
         if config.isRealistic {
             steps = stepPlanner.steps(
-                rateSecondsPerSecond: config.advanced.time.realisticRate.simulatedSecondsPerSecond,
+                rateSecondsPerSecond: activeRealTimeRate.simulatedSecondsPerSecond,
                 timeStep: effectiveTimeStep, secondsPerTime: config.scale.units.secondsPerTime, maxSteps: cap
             )
         } else {

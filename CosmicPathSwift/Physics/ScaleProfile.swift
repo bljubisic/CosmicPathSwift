@@ -78,12 +78,15 @@ enum PlanetRadiusRule: Equatable, Sendable {
     /// R = R⊕ × (m / M⊕)^exponent, the rocky-planet mass–radius relation.
     /// Masses below `massFloor` use the floor, like `fixedProxy`.
     case massPower(radiusAtEarthMass: Double, earthMass: Double, exponent: Double, massFloor: Double)
+    /// A compact probe with no size: the Roche limit is 0, so it is never stripped.
+    case pointMass
 
     /// Smallest planet mass used in the Roche limit's (2M/m)^⅓.
     var rocheMassFloor: Double {
         switch self {
         case .fixedProxy(_, let massFloor): return massFloor
         case .massPower(_, _, _, let massFloor): return massFloor
+        case .pointMass: return 1e-30   // any positive floor: the radius is 0
         }
     }
 
@@ -93,6 +96,8 @@ enum PlanetRadiusRule: Equatable, Sendable {
             return radius
         case .massPower(let radiusAtEarthMass, let earthMass, let exponent, let massFloor):
             return radiusAtEarthMass * pow(max(planetMass, massFloor) / earthMass, exponent)
+        case .pointMass:
+            return 0
         }
     }
 }
@@ -257,4 +262,8 @@ enum SIConstants {
     static let solarRadius: Double = 6.957e8
     static let earthRadius: Double = 6.3781e6
     static let kilometer: Double = 1_000
+    /// GM☉/c², half the Sun's Schwarzschild radius (≈ 1476.6 m).
+    static let solarGravitationalLength: Double = gravitationalConstant * solarMass / (speedOfLight * speedOfLight)
+    /// GM☉/c³, the light-travel time across GM☉/c² (≈ 4.9255 µs).
+    static let solarGravitationalTime: Double = solarGravitationalLength / speedOfLight
 }

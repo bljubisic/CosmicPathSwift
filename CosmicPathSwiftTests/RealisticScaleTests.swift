@@ -414,14 +414,15 @@ struct ScaleToggleTests {
         #expect(abs(viewModel.effectiveTimeStep - 0.2079) < 0.001)
     }
 
-    @Test func selectingRealisticTurnsBlackHoleModeOff() {
-        let (viewModel, _) = makeViewModel()
+    /// PR 3: Black Hole Mode survives the switch and selects the strong-field profile.
+    @Test func selectingRealisticKeepsBlackHoleModeInStrongField() {
+        let (viewModel, log) = makeViewModel()
         viewModel.config.isBlackHoleMode = true
         viewModel.config.separationAU = 1.3
         viewModel.selectScale(.realistic)
-        #expect(!viewModel.config.isBlackHoleMode)
-        #expect(viewModel.config.separationAU == 1)
-        #expect(viewModel.config.mass1Multiplier == 1)
+        #expect(viewModel.config.isBlackHoleMode)
+        #expect(viewModel.config.isStrongField)
+        #expect(log.setups.last?.scale == .realisticStrongField)
     }
 
     @Test func restoreDefaultsReturnsToVisualAndResetKeepsTheScale() {

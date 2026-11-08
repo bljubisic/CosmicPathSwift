@@ -245,7 +245,7 @@ enum InitialConditions {
               dangerZone(at: periapsisDistance(config: circular), config: config) != danger else {
             return nil
         }
-        let distance = String(format: "%.2f AU", periapsis / config.scale.au)
+        let distance = config.distanceLabel(simulationLength: periapsis)
         return "Closest approach \(distance) is \(danger.description)."
     }
 

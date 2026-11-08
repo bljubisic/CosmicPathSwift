@@ -23,6 +23,8 @@ enum RealUnitsFormatter {
     /// Rings smaller than this many points on screen can't be seen.
     static let visibleScreenLengthPoints: Double = 0.5
 
+    private static let microsecond: Double = 1e-6
+    private static let millisecond: Double = 1e-3
     private static let secondsPerMinute: Double = 60
     private static let secondsPerHour: Double = 3_600
     private static let arcsecondsPerDegree: Double = 3_600
@@ -31,12 +33,17 @@ enum RealUnitsFormatter {
 
     // MARK: - Time, length, speed
 
-    /// Simulated time as "42 s", "3.5 min", "6.0 h", "27.3 days", "1.25 years" or "300 years".
+    /// Simulated time as "820 µs", "4.5 ms", "42 s", "3.5 min", "6.0 h",
+    /// "27.3 days", "1.25 years" or "300 years". Zero is "0 s".
     static func duration(_ time: Double, units: UnitSystem) -> String {
         let seconds = abs(time * units.secondsPerTime)
         let day = SIConstants.secondsPerDay
         let year = SIConstants.julianYear
         switch seconds {
+        case 0: return "0 s"
+        case ..<millisecond: return String(format: "%.0f µs", seconds / microsecond)
+        case ..<(100 * millisecond): return String(format: "%.1f ms", seconds / millisecond)
+        case ..<1: return String(format: "%.0f ms", seconds / millisecond)
         case ..<secondsPerMinute: return String(format: "%.0f s", seconds)
         case ..<secondsPerHour: return String(format: "%.1f min", seconds / secondsPerMinute)
         case ..<day: return String(format: "%.1f h", seconds / secondsPerHour)

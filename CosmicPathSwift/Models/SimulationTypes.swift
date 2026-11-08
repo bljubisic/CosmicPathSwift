@@ -486,6 +486,13 @@ struct SimulationConfig: Equatable {
     /// enough to be visually rendered (rₛ = 125 px at 1× multiplier).
     var isBlackHoleMode: Bool = false
 
+    /// Black hole mass in M☉ in the Realistic strong-field setup (Realistic +
+    /// Black Hole Mode). Kept apart from `mass1Multiplier` so Visual is untouched.
+    var strongFieldBlackHoleMass: Double = ScaleProfile.StrongField.defaultBlackHoleMass
+
+    /// Orbit radius in Schwarzschild radii in the strong-field setup.
+    var strongFieldDistanceRs: Double = ScaleProfile.StrongField.defaultDistanceRs
+
     /// Integration time step per sub-step in simulation time units.
     /// Smaller values improve accuracy but slow the simulation.
     var timeStep: Double = 0.02
@@ -533,14 +540,20 @@ struct SimulationConfig: Equatable {
     // MARK: - Derived Simulation Values
 
     /// Physics scale the simulation runs in: constants, slider-unit conversions
-    /// and size rules, as chosen in the Advanced sheet (issue #21).
-    var scale: ScaleProfile { advanced.scale.profile }
+    /// and size rules, as chosen in the Advanced sheet (issue #21). Realistic
+    /// with Black Hole Mode on (2-body) uses the strong-field profile.
+    var scale: ScaleProfile {
+        isStrongField ? .realisticStrongField : advanced.scale.profile
+    }
 
     /// True when running in the Realistic scale.
     var isRealistic: Bool { advanced.scale == .realistic }
 
     /// The simulation mass for body 1 (central body).
     var simulationMass1: Double {
+        if isStrongField {
+            return strongFieldBlackHoleMass * scale.solarMass
+        }
         if isBlackHoleMode {
             return scale.blackHoleBaseMass * mass1Multiplier
         }
@@ -554,6 +567,9 @@ struct SimulationConfig: Equatable {
 
     /// The simulation separation in the scale's length unit.
     var simulationSeparation: Double {
+        if isStrongField {
+            return strongFieldDistanceRs * strongFieldSchwarzschildRadius
+        }
         return scale.au * separationAU
     }
 
@@ -670,6 +686,15 @@ struct TimeSettings: Equatable, Codable, Sendable {
     /// Simulated time per real second in the Realistic scale, which replaces
     /// `timeSpeed` there.
     var realisticRate: RealTimeRate = .oneMonth
+
+    /// Simulated time per real second in the Realistic strong-field setup
+    /// (Black Hole Mode). An 8 rₛ orbit around 10 M☉ takes ≈ 18 ms, so ≈ 1.8 s on screen.
+    var strongFieldRate: RealTimeRate = .tenMilliseconds
+
+    /// The Realistic rate that applies: `strongFieldRate` in strong field, else `realisticRate`.
+    func activeRate(strongField: Bool) -> RealTimeRate {
+        strongField ? strongFieldRate : realisticRate
+    }
 
     /// Values offered by the Accuracy picker.
     static let timeStepChoices: [Double] = [0.25, 0.5, 1, 2]

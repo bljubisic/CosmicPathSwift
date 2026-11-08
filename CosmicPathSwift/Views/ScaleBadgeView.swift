@@ -8,7 +8,8 @@
 
 import SwiftUI
 
-/// "Visual · GR magnified ≈ 1.7 million×" or "Realistic · 1 s = 1 month · sizes not to scale".
+/// "Visual · GR magnified ≈ 1.7 million×", "Realistic · 1 s = 1 month · sizes not to scale"
+/// or, in strong field, "Realistic · 10 M☉ black hole · 1 s = 10 ms · sizes not to scale".
 struct ScaleBadgeView: View {
     let viewModel: SimulationViewModel
 
@@ -17,7 +18,7 @@ struct ScaleBadgeView: View {
             .font(.system(size: 10))
             .foregroundStyle(.white.opacity(0.55))
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .minimumScaleFactor(0.6)   // the strong-field text is longer; stay on one line
             .accessibilityLabel("Physics scale")
             .accessibilityValue(Self.text(config: viewModel.config, achievedRate: viewModel.achievedRealTimeRate))
     }
@@ -30,12 +31,15 @@ struct ScaleBadgeView: View {
             let factor = ScaleComparison.grMagnification(config: config)
             return "Visual · GR magnified ≈ \(RealUnitsFormatter.magnification(factor))"
         case .realistic:
-            return "Realistic · \(rateText(config: config, achievedRate: achievedRate)) · sizes not to scale"
+            let blackHole = config.isStrongField ? "\(config.strongFieldMassLabel) black hole · " : ""
+            return "Realistic · \(blackHole)\(rateText(config: config, achievedRate: achievedRate)) · sizes not to scale"
         }
     }
 
     private static func rateText(config: SimulationConfig, achievedRate: Double?) -> String {
-        guard let achievedRate else { return config.advanced.time.realisticRate.label }
+        guard let achievedRate else {
+            return config.advanced.time.activeRate(strongField: config.isStrongField).label
+        }
         return "1 s = " + RealUnitsFormatter.duration(achievedRate / config.scale.units.secondsPerTime,
                                                       units: config.scale.units) + " (CPU-limited)"
     }

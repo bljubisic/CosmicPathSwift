@@ -103,8 +103,8 @@ struct AdvancedControlsView: View {
             "Rate",
             caption: "Simulated time per real second. Faster rates run more steps per frame, never larger steps."
         ) {
-            Picker("Rate", selection: $viewModel.config.advanced.time.realisticRate) {
-                ForEach(RealTimeRate.allCases, id: \.self) { rate in
+            Picker("Rate", selection: rateBinding) {
+                ForEach(RealTimeRate.choices(strongField: viewModel.config.isStrongField), id: \.self) { rate in
                     Text(rate.label).tag(rate)
                 }
             }
@@ -116,6 +116,13 @@ struct AdvancedControlsView: View {
                     .foregroundStyle(.orange)
             }
         }
+    }
+
+    /// The planetary or strong-field rate, whichever the current setup uses.
+    private var rateBinding: Binding<RealTimeRate> {
+        viewModel.config.isStrongField
+            ? $viewModel.config.advanced.time.strongFieldRate
+            : $viewModel.config.advanced.time.realisticRate
     }
 
     private var stepButton: some View {

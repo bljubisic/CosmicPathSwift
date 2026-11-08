@@ -73,7 +73,8 @@ struct HabitableZone: Equatable, Sendable {
     /// black hole when `isBlackHoleMode` is on. The flux limits come from the
     /// Advanced sheet (`config.advanced.habitableZone`).
     static func forCentralBody(of config: SimulationConfig) -> HabitableZone {
-        let mass = config.mass1Multiplier
+        // In M☉: the strong-field BH Mass slider is in real solar masses already.
+        let mass = config.isStrongField ? config.strongFieldBlackHoleMass : config.mass1Multiplier
         let luminosity = config.isBlackHoleMode
             ? HabitableZonePhysics.blackHoleLuminosity(solarMasses: mass, eddingtonFraction: config.accretionEddingtonFraction)
             : HabitableZonePhysics.starLuminosity(solarMasses: mass)

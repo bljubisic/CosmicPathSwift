@@ -54,7 +54,7 @@ struct DiagnosticsSection: View {
         ) {
             if let elements = viewModel.orbitalElements {
                 HStack {
-                    valueColumn("a", elements.isBound ? Self.au(elements.semiMajorAxis, scale: viewModel.config.scale) : "unbound")
+                    valueColumn("a", elements.isBound ? semiMajorAxisText(elements.semiMajorAxis) : "unbound")
                     valueColumn("e", String(format: "%.3f", elements.eccentricity))
                     valueColumn("T", elements.period.map(periodText) ?? "—")
                 }
@@ -73,7 +73,8 @@ struct DiagnosticsSection: View {
 
     @ViewBuilder
     private var precessionRow: some View {
-        if viewModel.config.isRealistic {
+        // Strong-field precession is degrees per orbit, like Visual's.
+        if viewModel.config.isRealistic && !viewModel.config.isStrongField {
             realisticPrecessionRow
         } else {
             visualPrecessionRow
@@ -83,7 +84,7 @@ struct DiagnosticsSection: View {
     private var visualPrecessionRow: some View {
         CaptionedRow(
             "Precession per Orbit",
-            caption: "6πGM/(c²a(1−e²)) is the weak-field formula. With the app's strong GR, the next-order term adds about (18+e²)/4 · GM/(c²p): roughly 8% at 1 AU. Widen the orbit to see them converge."
+            caption: visualPrecessionCaption
         ) {
             if let comparison = viewModel.precessionComparison {
                 HStack {
@@ -95,6 +96,13 @@ struct DiagnosticsSection: View {
                 Text("— (after the first full orbit)").foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var visualPrecessionCaption: String {
+        if viewModel.config.isStrongField {
+            return "6πGM/(c²a(1−e²)) is the weak-field formula. Close to the hole the next-order term, about (18+e²)/4 · GM/(c²p), grows large: widen the orbit to see them converge."
+        }
+        return "6πGM/(c²a(1−e²)) is the weak-field formula. With the app's strong GR, the next-order term adds about (18+e²)/4 · GM/(c²p): roughly 8% at 1 AU. Widen the orbit to see them converge."
     }
 
     /// Realistic: arcseconds per orbit and per century, measured next to GR's prediction.
@@ -149,9 +157,11 @@ struct DiagnosticsSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Semi-major axis in AU, e.g. "1.002 AU".
-    private static func au(_ length: Double, scale: ScaleProfile) -> String {
-        String(format: "%.3f AU", length / scale.au)
+    /// Semi-major axis in AU ("1.002 AU"), or in rₛ in strong field ("8.00 rₛ").
+    private func semiMajorAxisText(_ length: Double) -> String {
+        let config = viewModel.config
+        guard !config.isStrongField else { return config.distanceLabel(simulationLength: length) }
+        return String(format: "%.3f AU", length / config.scale.au)
     }
 }
 

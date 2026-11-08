@@ -23,14 +23,34 @@ struct MetricsText {
         guard isRealistic else { return String(format: "\u{03C4}/t = %.3f", metrics.timeDilationFactor) }
         let separation = max(metrics.separation, .leastNonzeroMagnitude)
         let deficit = RealUnitsFormatter.oneMinusSqrtOneMinus(metrics.schwarzschildRadius / separation)
+        // Near a black hole the dilation is large enough for plain decimals.
+        if deficit >= Self.plainDilationDeficit {
+            return String(format: "\u{03C4}/t = %.3f", 1 - deficit)
+        }
         return "\u{03C4}/t = " + RealUnitsFormatter.deviation(fromOne: 1 - deficit)
     }
 
-    /// Accumulated perihelion advance: degrees in Visual, arcseconds in Realistic.
+    /// Accumulated perihelion advance: degrees in Visual; in Realistic,
+    /// arcseconds until it reaches a degree (as near a black hole), then degrees.
     func precession(_ metrics: RelativisticMetrics) -> String {
-        guard isRealistic else { return String(format: "%.2f\u{00B0}", metrics.precessionAngle) }
+        guard isRealistic, abs(metrics.precessionAngle) < Self.degreeDisplayThreshold else {
+            return String(format: "%.2f\u{00B0}", metrics.precessionAngle)
+        }
         return RealUnitsFormatter.arcseconds(degrees: metrics.precessionAngle)
     }
+
+    /// Schwarzschild radius slot: simulation units in Visual, km in Realistic.
+    func schwarzschildRadius(_ metrics: RelativisticMetrics) -> (label: String, value: String) {
+        guard isRealistic else {
+            return ("r\u{209B} (\(units.lengthSymbol))", String(format: "%.1f", metrics.schwarzschildRadius))
+        }
+        return ("r\u{209B}", RealUnitsFormatter.schwarzschildRadius(metrics.schwarzschildRadius, units: units))
+    }
+
+    /// Precession at or above this many degrees is shown in degrees in Realistic.
+    static let degreeDisplayThreshold: Double = 1
+    /// τ/t deficits at or above this are shown as plain decimals ("0.935").
+    static let plainDilationDeficit: Double = 1e-3
 
     /// "Precession", plus "(too small to see)" in Realistic when it is.
     func precessionLabel(_ metrics: RelativisticMetrics) -> String {

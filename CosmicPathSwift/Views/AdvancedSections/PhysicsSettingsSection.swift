@@ -49,7 +49,7 @@ struct PhysicsSettingsSection: View {
         }
     }
 
-    /// Goes through `selectScale`, which also turns Black Hole Mode off for Realistic.
+    /// Goes through `selectScale`; in Realistic, Black Hole Mode selects the strong-field setup.
     private var scaleBinding: Binding<PhysicsScale> {
         Binding(
             get: { viewModel.config.advanced.scale },
@@ -60,7 +60,9 @@ struct PhysicsSettingsSection: View {
     private var fixedSofteningRow: some View {
         CaptionedRow(
             "Softening",
-            caption: "Fixed at 150 km (10⁻⁶ AU), far below any star or planet; collisions use physical radii."
+            caption: viewModel.config.isStrongField
+                ? "Fixed at 1.5 m (10⁻³ GM☉/c²), far below the horizon. Units: GM☉/c² = 1.48 km, GM☉/c³ = 4.93 µs."
+                : "Fixed at 150 km (10⁻⁶ AU), far below any star or planet; collisions use physical radii."
         ) {
             EmptyView()
         }
