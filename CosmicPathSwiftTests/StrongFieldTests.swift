@@ -341,7 +341,7 @@ struct StrongFieldFormattingTests {
         #expect(text.schwarzschildRadius(metrics).value == "29.5 km")
         #expect(text.precession(metrics) == "42.50°")
         // τ/t = √(1 − 1/8) = 0.935.
-        #expect(text.timeDilation(metrics) == "\u{03C4}/t = 0.935")
+        #expect(text.timeDilation(metrics) == "0.935")
     }
 }
 

@@ -28,6 +28,9 @@ enum RealUnitsFormatter {
     private static let secondsPerMinute: Double = 60
     private static let secondsPerHour: Double = 3_600
     private static let arcsecondsPerDegree: Double = 3_600
+    private static let arcminutesPerDegree: Double = 60
+    /// Kilometre values at or above this are shown in millions ("12.7 million km").
+    private static let millionKilometres: Double = 1e6
     /// Values in [0.01, 1000) are shown as plain decimals by `scientific`.
     private static let plainRange: Range<Double> = 0.01..<1_000
 
@@ -67,21 +70,32 @@ enum RealUnitsFormatter {
         return String(format: "%.1f km/s", metersPerSecond / SIConstants.kilometer)
     }
 
-    /// Schwarzschild radius in km, e.g. "2.95 km".
+    /// Schwarzschild radius in km, e.g. "2.95 km", or "12.7 million km" for Sgr A*.
     static func schwarzschildRadius(_ rs: Double, units: UnitSystem) -> String {
         kilometres(rs * units.metersPerLength)
     }
 
+    /// "2.95 km", "384400 km", or "12.7 million km" from a million km up.
     private static func kilometres(_ meters: Double) -> String {
         let km = meters / SIConstants.kilometer
-        return km >= 100 ? String(format: "%.0f km", km) : String(format: "%.3g km", km)
+        switch km {
+        case millionKilometres...: return String(format: "%.3g million km", km / millionKilometres)
+        case 100...: return String(format: "%.0f km", km)
+        default: return String(format: "%.3g km", km)
+        }
     }
 
     // MARK: - Precession
 
-    /// Degrees as arcseconds, e.g. "0.104″".
+    /// Degrees as arcseconds, e.g. "0.104″". `%.3g`, so meant for values
+    /// below 1000″; larger ones read better in arcminutes.
     static func arcseconds(degrees: Double) -> String {
         String(format: "%.3g″", degrees * arcsecondsPerDegree)
+    }
+
+    /// Degrees as arcminutes, e.g. "12.2′".
+    static func arcminutes(degrees: Double) -> String {
+        String(format: "%.1f\u{2032}", degrees * arcminutesPerDegree)
     }
 
     /// Precession per Julian century in arcseconds, from the advance per orbit

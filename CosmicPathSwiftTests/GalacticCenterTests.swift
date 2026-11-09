@@ -248,6 +248,6 @@ struct GalacticCenterViewModelTests {
     }
 
     @Test func precessionIsShownInArcminutes() {
-        #expect(DiagnosticsSection.arcminutes(degrees: 12.2 / 60) == "12.2\u{2032}")
+        #expect(RealUnitsFormatter.arcminutes(degrees: 12.2 / 60) == "12.2\u{2032}")
     }
 }

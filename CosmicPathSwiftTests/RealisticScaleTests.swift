@@ -594,7 +594,8 @@ struct RealisticLabelTests {
         metrics.orbitsCompleted = 1
         metrics.elapsedTime = 365.25
         let text = MetricsText(config: Realistic.config())
-        #expect(text.timeDilation(metrics) == "τ/t = 1 − 9.9×10⁻⁹")
+        #expect(text.timeDilation(metrics) == "1 − 9.9×10⁻⁹")
+        #expect(text.timeDilationLabel == "Time Dilation τ/t")
         #expect(text.precession(metrics) == "0.1″")
         #expect(text.precessionLabel(metrics) == "Precession (too small to see)")
         #expect(text.velocityFraction(metrics.velocityFractionOfC) == "9.9×10⁻⁵")
