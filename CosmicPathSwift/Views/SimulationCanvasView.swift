@@ -45,6 +45,18 @@ import SwiftUI
 struct SimulationCanvasView: View {
     let viewModel: SimulationViewModel
     @Binding var canvasSize: CGSize
+    /// Padding for the overlays (formula text, badges, event banner) but not the
+    /// drawing. When the canvas ignores the safe area to draw full-screen, pass the
+    /// safe-area insets so the overlays stay clear of the status bar, the Dynamic
+    /// Island and the home indicator (issue #25).
+    var overlayInsets = EdgeInsets()
+    /// Whether the canvas draws the formula text in its top-left corner. False when
+    /// `ContentView` shows it under the mass legend instead.
+    var showsFormulas = true
+    /// Whether the canvas draws the event banner at its bottom edge. False when the
+    /// canvas fills the screen: `ContentView` then shows it above the metrics,
+    /// where the floating controls can't cover it (issue #26).
+    var showsEventBanner = true
 
     /// Tracks the cumulative drag translation from the previous gesture event so
     /// we can compute per-event deltas. Reset to `.zero` in `.onEnded` so each
@@ -140,15 +152,23 @@ struct SimulationCanvasView: View {
 
                 vectorArrows
 
-                formulaOverlay
+                // Overlays: inset by `overlayInsets`; the drawing above is not.
+                Group {
+                    if showsFormulas {
+                        formulaOverlay
+                    }
 
-                if isThreeBody {
-                    ChaosTwinBadge(viewModel: viewModel)
-                } else {
-                    HabitableZoneBadge(viewModel: viewModel)
+                    if isThreeBody {
+                        ChaosTwinBadge(viewModel: viewModel)
+                    } else {
+                        HabitableZoneBadge(viewModel: viewModel)
+                    }
+
+                    if showsEventBanner {
+                        eventOverlay
+                    }
                 }
-
-                eventOverlay
+                .padding(overlayInsets)
             }
             .onAppear {
                 canvasSize = geometry.size
@@ -345,56 +365,13 @@ struct SimulationCanvasView: View {
 
     // MARK: - Event Overlay
 
-    /// Absorption (2-body) or merge / ejection (3-body) banner, if anything happened.
-    @ViewBuilder
+    /// Absorption (2-body) or merge / ejection (3-body) banner (`EventBannerView`),
+    /// centred at the bottom of the canvas.
     private var eventOverlay: some View {
-        if isThreeBody {
-            let metrics = viewModel.systemMetrics
-            if let collision = metrics.collision {
-                eventBanner(
-                    title: "Collision",
-                    details: ["\(letter(collision.0)) + \(letter(collision.1)) merged"]
-                        + (metrics.ejectedBodyID.map { ["Body \(letter($0)) ejected"] } ?? []),
-                    color: .red
-                )
-            } else if let ejected = metrics.ejectedBodyID {
-                eventBanner(title: "Ejection", details: ["Body \(letter(ejected)) ejected"], color: .orange)
-            }
-        } else if viewModel.metrics.isAbsorbed {
-            let isBlackHole = viewModel.metrics.isBlackHole
-            eventBanner(
-                title: isBlackHole ? "Event Horizon Crossed" : "Collision",
-                details: [isBlackHole ? "Object absorbed by black hole" : "Planet collided with the star"],
-                color: .red
-            )
-        }
-    }
-
-    private func letter(_ id: Int) -> String {
-        SystemMetrics.letter(for: id)
-    }
-
-    private func eventBanner(title: String, details: [String], color: Color) -> some View {
         VStack {
             Spacer()
-            HStack {
-                Spacer()
-                VStack(spacing: 4) {
-                    Text(title)
-                        .font(.headline.bold())
-                        .foregroundStyle(color)
-                    ForEach(details, id: \.self) { detail in
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
-                }
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                Spacer()
-            }
-            .padding(.bottom, 20)
+            EventBannerView(viewModel: viewModel)
+                .padding(.bottom, 20)
         }
     }
 
@@ -505,39 +482,12 @@ struct SimulationCanvasView: View {
 
     // MARK: - Formula Overlay
 
-    /// Displays the governing equations in the top-left corner as a subtle watermark.
-    /// Shows the Einstein field equation (Gμν + Λgμν = 8πG/c⁴ Tμν) and either:
-    /// - 3-body mode: the pairwise-summed GR-corrected acceleration
-    /// - 2-body black hole mode: the Schwarzschild radius and photon sphere formulas
-    /// - 2-body normal mode: the Schwarzschild geodesic acceleration formula
+    /// The governing equations (`FormulaOverlayView`) in the top-left corner.
     private var formulaOverlay: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("G\u{03BC}\u{03BD} + \u{039B}g\u{03BC}\u{03BD} = (8\u{03C0}G/c\u{2074})T\u{03BC}\u{03BD}")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.25))
-                    if isThreeBody {
-                        Text("aᵢ = Σⱼ (−Gmⱼ/rᵢⱼ² − 3GmⱼLᵢⱼ²/c²rᵢⱼ⁴) r̂ᵢⱼ")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.18))
-                    } else if viewModel.metrics.isBlackHole {
-                        Text("r\u{209B} = 2GM/c\u{00B2}  r\u{209A}\u{2095} = 1.5r\u{209B}")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.red.opacity(0.3))
-                        if viewModel.config.isStrongField {
-                            // Rings and horizon are at true scale; the disk is decoration.
-                            Text("accretion disk illustrative")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.red.opacity(0.25))
-                        }
-                    } else {
-                        Text("a = -GM/r\u{00B2} - 3GML\u{00B2}/c\u{00B2}r\u{2074}")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.18))
-                    }
-                }
-                .padding(8)
+                FormulaOverlayView(viewModel: viewModel)
+                    .padding(8)
                 Spacer()
             }
             Spacer()

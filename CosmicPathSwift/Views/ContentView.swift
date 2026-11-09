@@ -36,9 +36,9 @@ struct ContentView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 if isLandscape {
-                    landscapeLayout
+                    landscapeLayout(safeArea: geometry.safeAreaInsets)
                 } else {
-                    portraitLayout
+                    portraitLayout(safeArea: geometry.safeAreaInsets)
                 }
             }
         }
@@ -65,22 +65,35 @@ struct ContentView: View {
 
     /// Portrait layout switches between a full-control editing state (paused) and
     /// a full-screen immersive view (running) with floating overlays.
-    private var portraitLayout: some View {
+    ///
+    /// While running, the canvas draws under the status bar, so it gets the
+    /// safe-area insets for its own overlays, and the formula text moves under
+    /// the mass legend, which would otherwise share the top-left corner (#25).
+    /// The event banner sits directly above the metrics, so the floating
+    /// controls can't cover it (#26).
+    private func portraitLayout(safeArea: EdgeInsets) -> some View {
         ZStack {
             if viewModel.isRunning {
                 // Running: full-screen canvas with floating pause button and metrics
-                SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
+                SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize,
+                                     overlayInsets: safeArea, showsFormulas: false, showsEventBanner: false)
                     .ignoresSafeArea()
 
                 VStack {
-                    HStack {
-                        massLegend
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            massLegend
+                            FormulaOverlayView(viewModel: viewModel)
+                        }
                         Spacer()
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
 
                     Spacer()
+
+                    EventBannerView(viewModel: viewModel)
+                        .padding(.bottom, 8)
 
                     MetricsPanelView(viewModel: viewModel)
                         .padding(.horizontal)
@@ -121,15 +134,22 @@ struct ContentView: View {
     /// Landscape layout always shows full-screen canvas. Parameter sliders are hidden
     /// (`showParameterControls: false`) to maximize visual space. Only play/pause/reset
     /// buttons appear in the bottom overlay when paused.
-    private var landscapeLayout: some View {
+    ///
+    /// The canvas draws edge to edge, so it gets the safe-area insets to keep its
+    /// overlays clear of the Dynamic Island and the corners (#25). The bottom of
+    /// the screen belongs to the controls in both states, so the event banner sits
+    /// directly above them (#26).
+    private func landscapeLayout(safeArea: EdgeInsets) -> some View {
         ZStack(alignment: .bottom) {
-            SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
+            SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize,
+                                 overlayInsets: safeArea, showsEventBanner: false)
                 .ignoresSafeArea()
 
             if viewModel.isRunning {
                 // Running: floating pause button and metrics overlay
                 VStack {
                     Spacer()
+                    EventBannerView(viewModel: viewModel)
                     HStack {
                         massLegend
                         Spacer()
@@ -145,22 +165,26 @@ struct ContentView: View {
                     .padding(.bottom, 8)
                 }
             } else {
-                // Paused/stopped: bottom overlay with metrics and controls
-                VStack(spacing: 0) {
-                    HStack {
-                        massLegend
-                        Spacer()
-                        MetricsPanelView(viewModel: viewModel)
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 6)
+                // Paused/stopped: bottom overlay with metrics and controls, event banner above it
+                VStack(spacing: 8) {
+                    EventBannerView(viewModel: viewModel)
 
-                    ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false,
-                                     onShowAdvanced: { isShowingAdvanced = true })
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                    VStack(spacing: 0) {
+                        HStack {
+                            massLegend
+                            Spacer()
+                            MetricsPanelView(viewModel: viewModel)
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+
+                        ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false,
+                                         onShowAdvanced: { isShowingAdvanced = true })
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                    }
+                    .background(Color.black.opacity(0.5))
                 }
-                .background(Color.black.opacity(0.5))
             }
         }
         .ignoresSafeArea()
