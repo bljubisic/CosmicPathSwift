@@ -91,6 +91,26 @@ extension SimulationConfig {
         return String(format: strongFieldBlackHoleMass < 10 ? "%.1f M\u{2609}" : "%.0f M\u{2609}", strongFieldBlackHoleMass)
     }
 
+    /// Mass legend entries for the central body and the orbiter in 2-body mode.
+    ///
+    /// Outside strong field the sliders are the masses, so their labels are used.
+    /// In strong field the black hole's mass comes from the BH Mass slider or
+    /// Sgr A*, and the orbiter is the probe, the Planet Mass slider, or S2.
+    var twoBodyLegendLabels: [String] {
+        guard isStrongField else { return [mass1Label, mass2Label] }
+        switch strongFieldScenario {
+        case .stellarBlackHole:
+            // A compact test mass: its 1 M⊕ engine mass has no slider and doesn't matter.
+            return [strongFieldMassLabel, "Probe"]
+        case .blackHolePlanet:
+            return [strongFieldMassLabel, mass2Label]
+        case .sagittariusAStar:
+            // Named, because at this scale the black hole itself is invisible.
+            return ["Sgr A* · " + strongFieldMassLabel,
+                    String(format: "S2 · %.0f M\u{2609}", GalacticCenter.starMass)]
+        }
+    }
+
     /// Distance slider text, e.g. "8.0 rₛ".
     var strongFieldDistanceLabel: String {
         String(format: strongFieldDistanceRs < 10 ? "%.1f r\u{209B}" : "%.0f r\u{209B}", strongFieldDistanceRs)
