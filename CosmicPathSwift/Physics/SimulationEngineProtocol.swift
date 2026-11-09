@@ -130,6 +130,10 @@ struct EngineSetup {
     /// intervals of simulated time (2-body trail spacing, bleed emission and
     /// fade) are multiplied by it. 1 in the Visual scale.
     var timeRatio: Double = 1
+    /// Simulated time between 2-body trail points when it shouldn't be one
+    /// default step × `timeRatio` (`ScenarioTiming.trailSampleInterval`, S2
+    /// only). nil keeps the default spacing.
+    var trailSampleInterval: Double? = nil
 }
 
 // MARK: - GravitySimulationEngine
@@ -219,7 +223,8 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
         bodies: [CelestialBody],
         settings: EngineSettings = EngineSettings(),
         scale: ScaleProfile = .visual,
-        timeRatio: Double = 1
+        timeRatio: Double = 1,
+        trailSampleInterval: Double? = nil
     ) {
         precondition(!bodies.isEmpty, "GravitySimulationEngine needs at least one body")
         let softening = scale.softening(for: settings)
@@ -232,7 +237,8 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
         self.nBodyState = NBodyState(bodies: initial, softening: softening, constants: scale.constants)
 
         if isTwoBodyScenario {
-            twoBodyState.configureSamplers(timeRatio: self.timeRatio)
+            let trailInterval = trailSampleInterval.flatMap { $0 > 0 ? $0 : nil }
+            twoBodyState.configureSamplers(timeRatio: self.timeRatio, trailInterval: trailInterval)
             twoBodyState.body2InitialMass = initial[1].mass
             twoBodyState.previousSeparation = (initial[1].position - initial[0].position).magnitude
             recordInitialInvariants()

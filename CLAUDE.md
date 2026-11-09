@@ -55,4 +55,4 @@ ContentView  (GeometryReader → portrait or landscape layout)
 
 **Orientation layout** — `ContentView` uses `GeometryReader` to detect landscape (`width > height`) and switches layouts. Landscape hides mass/distance sliders and the black hole toggle (`showParameterControls: false` on `ControlPanelView`).
 
-**Canvas rendering** — `SimulationCanvasView` uses SwiftUI `Canvas` (not `UIKit`) for the spacetime grid and orbital trails. The grid warp is purely visual — `warpPoint(_:toward:strength:)` displaces grid lines toward `body1Position`.
+**Canvas rendering** — `SimulationCanvasView` uses SwiftUI `Canvas` (not `UIKit`) for the spacetime grid and orbital trails. The grid warp is purely visual (`Utilities/SpacetimeGridWarp.swift`): Visual, planetary Realistic and 3-body pull grid vertices a fixed number of points toward the bodies (`.pull`); strong-field scenarios use `SchwarzschildGridWarp` (Flamm's paraboloid slope, r' = r(1 − √(rₛ/r))^s from rₛ on screen), so the Probe shows a deep funnel and S2 only a faint dimple.

@@ -288,7 +288,7 @@ struct AdvancedControlsView: View {
         let strength = $viewModel.config.advanced.display.gridWarpStrength
         return captionedRow(
             "Grid Warp: ×\(String(format: "%.2g", strength.wrappedValue))",
-            caption: "How strongly the grid is pulled toward the bodies. 0 gives a flat grid."
+            caption: "How strongly the grid is pulled toward the bodies. 0 gives a flat grid. Around Realistic black holes, ×1 follows the real curvature: deep near the hole, faint far from it."
         ) {
             Slider(value: strength, in: DisplaySettings.gridWarpRange, step: 0.25)
         }
@@ -297,7 +297,7 @@ struct AdvancedControlsView: View {
     private var trailLengthPicker: some View {
         captionedRow(
             "Trail Length",
-            caption: "How far back the orbit trails reach. Measured in simulated time, so speed and accuracy don't change it."
+            caption: "How far back the orbit trails reach. Measured in simulated time, so speed and accuracy don't change it. For S2, the default length is one full orbit."
         ) {
             Picker("Trail Length", selection: $viewModel.config.advanced.display.trailLengthMultiplier) {
                 ForEach(DisplaySettings.trailLengthChoices, id: \.self) { value in

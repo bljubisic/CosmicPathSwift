@@ -71,6 +71,29 @@ enum ScenarioTiming {
         return scaled / visual
     }
 
+    /// Simulated time between 2-body trail points when it shouldn't follow the
+    /// time step, or nil for the default spacing (one default step × time ratio).
+    ///
+    /// S2's step resolves its fast periapsis passage (e = 0.884, ≈ 44,500 steps
+    /// per orbit against Visual's ≈ 1,800), so a step-spaced trail would cover
+    /// only ~2% of the orbit (issue #27). S2 instead records one point per
+    /// period / `DisplaySettings.baseTrailPoints`: the default trail traces one
+    /// full orbit.
+    ///
+    /// The period is Kepler's 2π√(a³/G(M + m)) for the scenario's semi-major
+    /// axis, which the run matches to 0.5%. Osculating elements of the starting
+    /// state would overestimate it by ~2%: S2 starts at periapsis with the
+    /// GR-corrected speed that makes a(1 + e) the other turning point, and at
+    /// e = 0.884 the Newtonian a is very sensitive to that speed.
+    static func trailSampleInterval(config: SimulationConfig) -> Double? {
+        guard config.mode == .twoBody, config.isGalacticCenter else { return nil }
+        let gm = config.scale.constants.G * (config.simulationMass1 + config.simulationMass2)
+        let semiMajorAxis = config.simulationSeparation
+        guard gm > 0, semiMajorAxis > 0 else { return nil }
+        let period = 2 * .pi * sqrt(semiMajorAxis * semiMajorAxis * semiMajorAxis / gm)
+        return period / Double(DisplaySettings.baseTrailPoints)
+    }
+
     /// Unperturbed starting bodies of `config`'s scenario.
     private static func initialBodies(config: SimulationConfig) -> [CelestialBody] {
         switch config.mode {
