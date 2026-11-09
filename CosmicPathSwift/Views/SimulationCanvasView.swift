@@ -381,47 +381,40 @@ struct SimulationCanvasView: View {
     /// visualize spacetime curvature. This is a purely cosmetic effect — the actual
     /// physics uses the Schwarzschild-corrected force law, not grid deformation.
     ///
-    /// Lines are drawn at 50pt intervals and subdivided into 5pt segments. Each segment
-    /// vertex is displaced toward every source returned by `warpSources`.
+    /// Lines are drawn at 50pt intervals and subdivided into 5pt segments, each
+    /// vertex moved by `gridWarp`. The curvature warp pulls the grid's outer
+    /// edge inward, so the grid then extends past the canvas by its padding.
     private func spacetimeGrid(size: CGSize) -> some View {
-        let sources = warpSources
+        let warp = gridWarp
         return Canvas { context, canvasSize in
             let step: CGFloat = 50
+            let segment: CGFloat = 5
             let color = Color.white.opacity(0.06)
+            let padding = warp.padding(canvasSize: canvasSize)
+            let lineStart = -(padding / step).rounded(.up) * step
+            let segmentStart = -(padding / segment).rounded(.up) * segment
 
-            var xPos: CGFloat = 0
-            while xPos <= canvasSize.width {
+            var xPos = lineStart
+            while xPos <= canvasSize.width + padding {
                 var path = Path()
-                var y: CGFloat = 0
-                var first = true
-                while y <= canvasSize.height {
-                    let warped = warpPoint(CGPoint(x: xPos, y: y), sources: sources)
-                    if first {
-                        path.move(to: warped)
-                        first = false
-                    } else {
-                        path.addLine(to: warped)
-                    }
-                    y += 5
+                var y = segmentStart
+                path.move(to: warp.warped(CGPoint(x: xPos, y: y)))
+                while y < canvasSize.height + padding {
+                    y += segment
+                    path.addLine(to: warp.warped(CGPoint(x: xPos, y: y)))
                 }
                 context.stroke(path, with: .color(color), lineWidth: 0.5)
                 xPos += step
             }
 
-            var yPos: CGFloat = 0
-            while yPos <= canvasSize.height {
+            var yPos = lineStart
+            while yPos <= canvasSize.height + padding {
                 var path = Path()
-                var x: CGFloat = 0
-                var first = true
-                while x <= canvasSize.width {
-                    let warped = warpPoint(CGPoint(x: x, y: yPos), sources: sources)
-                    if first {
-                        path.move(to: warped)
-                        first = false
-                    } else {
-                        path.addLine(to: warped)
-                    }
-                    x += 5
+                var x = segmentStart
+                path.move(to: warp.warped(CGPoint(x: x, y: yPos)))
+                while x < canvasSize.width + padding {
+                    x += segment
+                    path.addLine(to: warp.warped(CGPoint(x: x, y: yPos)))
                 }
                 context.stroke(path, with: .color(color), lineWidth: 0.5)
                 yPos += step
@@ -429,25 +422,34 @@ struct SimulationCanvasView: View {
         }
     }
 
-    /// Points the grid is pulled toward, with their pull strength in points.
+    /// How the grid is bent, scaled by the Advanced sheet's warp-strength setting.
     ///
-    /// 2-body (Visual): a single source at body1 with strength mass × zoom × 0.04
-    /// (the planet's pull is negligible). 3-body and the Realistic scale: one
-    /// source per body, mass-weighted relative to the heaviest body (Realistic
-    /// masses are ~1 in M☉, so the Visual formula would leave the grid flat).
-    ///
-    /// Every strength is multiplied by the Advanced sheet's warp-strength setting.
-    private var warpSources: [(center: CGPoint, strength: CGFloat)] {
+    /// - Realistic black holes (strong field): `SchwarzschildGridWarp` around
+    ///   the hole, from its rₛ on screen. The orbiting probe, planet or star is
+    ///   far too light to matter.
+    /// - 2-body Visual: a single pull toward body1 of mass × zoom × 0.04 points
+    ///   (the planet's pull is negligible).
+    /// - 3-body and planetary Realistic: one pull per body, mass-weighted
+    ///   relative to the heaviest body (Realistic masses are ~1 in M☉, so the
+    ///   Visual formula would leave the grid flat).
+    private var gridWarp: SpacetimeGridWarp {
         let userStrength = CGFloat(display.gridWarpStrength)
-        guard isThreeBody || viewModel.config.isRealistic else {
-            let strength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
-            return [(viewModel.body1Position, strength * userStrength)]
+        let config = viewModel.config
+        if config.isStrongField, let holeMass = viewModel.bodyMasses.first {
+            let rs = CGFloat(config.scale.constants.schwarzschildRadius(mass: holeMass) * viewModel.coordinateScale)
+            return .curvature(SchwarzschildGridWarp(
+                center: viewModel.body1Position, schwarzschildRadius: rs, strength: userStrength
+            ))
+        }
+        guard isThreeBody || config.isRealistic else {
+            let strength = CGFloat(config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
+            return .pull([.init(center: viewModel.body1Position, strength: strength * userStrength)])
         }
         let masses = viewModel.bodyMasses
         let heaviest = max(masses.max() ?? 1, .leastNonzeroMagnitude)
-        return zip(viewModel.bodyPositions, masses).map { position, mass in
-            (position, threeBodyWarpStrength * zoomSizeScale * CGFloat(mass / heaviest) * userStrength)
-        }
+        return .pull(zip(viewModel.bodyPositions, masses).map { position, mass in
+            .init(center: position, strength: threeBodyWarpStrength * zoomSizeScale * CGFloat(mass / heaviest) * userStrength)
+        })
     }
 
     // MARK: - Trail Path
@@ -548,22 +550,5 @@ struct SimulationCanvasView: View {
         let referenceScale = halfCanvas / referenceExtent
         let ratio = CGFloat(viewModel.coordinateScale) / referenceScale
         return max(0.4, min(1.0, ratio))
-    }
-
-
-    /// Displaces a grid point toward every warp source to simulate gravitational
-    /// curvature. Each source pulls by `strength` points along the line to it
-    /// (less within 1 pt), creating a funnel-like distortion around each body.
-    private func warpPoint(_ point: CGPoint, sources: [(center: CGPoint, strength: CGFloat)]) -> CGPoint {
-        var displaced = point
-        for source in sources {
-            let dx = source.center.x - point.x
-            let dy = source.center.y - point.y
-            let dist = max(sqrt(dx * dx + dy * dy), 1)
-            let warp = source.strength / dist
-            displaced.x += dx * warp
-            displaced.y += dy * warp
-        }
-        return displaced
     }
 }

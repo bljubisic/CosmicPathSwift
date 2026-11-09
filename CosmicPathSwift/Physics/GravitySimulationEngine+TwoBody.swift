@@ -83,9 +83,11 @@ extension GravitySimulationEngine {
         var tidalMassLossRate: Double = GravitySimulationEngine.tidalMassLossRate
 
         /// Stretches the fixed simulated-time intervals by `timeRatio`
-        /// (exactly the original values at 1).
-        mutating func configureSamplers(timeRatio: Double) {
-            trailSampler = TrailSampler(interval: GravitySimulationEngine.twoBodyTrailSampleInterval * timeRatio)
+        /// (exactly the original values at 1). `trailInterval`, when given,
+        /// replaces the trail spacing only (S2, issue #27).
+        mutating func configureSamplers(timeRatio: Double, trailInterval: Double? = nil) {
+            let trailSpacing = trailInterval ?? GravitySimulationEngine.twoBodyTrailSampleInterval * timeRatio
+            trailSampler = TrailSampler(interval: trailSpacing)
             bleedSampler = TrailSampler(interval: GravitySimulationEngine.bleedEmissionInterval * timeRatio)
             bleedDecayRate = BleedParticle.decayRate / timeRatio
             tidalMassLossRate = GravitySimulationEngine.tidalMassLossRate / timeRatio

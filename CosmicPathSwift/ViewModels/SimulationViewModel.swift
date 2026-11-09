@@ -303,7 +303,8 @@ class SimulationViewModel {
     init(
         engineFactory: @escaping EngineFactory = { setup in
             GravitySimulationEngine(
-                bodies: setup.bodies, settings: setup.settings, scale: setup.scale, timeRatio: setup.timeRatio
+                bodies: setup.bodies, settings: setup.settings, scale: setup.scale,
+                timeRatio: setup.timeRatio, trailSampleInterval: setup.trailSampleInterval
             )
         }
     ) {
@@ -529,7 +530,10 @@ class SimulationViewModel {
 
     /// Everything the engine factory needs for `bodies` under the current config.
     private func engineSetup(for bodies: [CelestialBody]) -> EngineSetup {
-        EngineSetup(bodies: bodies, settings: config.advanced.engine, scale: config.scale, timeRatio: timeRatio)
+        EngineSetup(
+            bodies: bodies, settings: config.advanced.engine, scale: config.scale, timeRatio: timeRatio,
+            trailSampleInterval: ScenarioTiming.trailSampleInterval(config: config)
+        )
     }
 
     // MARK: - Simulation Loop
