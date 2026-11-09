@@ -227,12 +227,13 @@ class SimulationViewModel {
     /// True in 3-body mode.
     var isThreeBodyMode: Bool { config.mode == .threeBody }
 
-    /// Legend label for each body: slider labels in 2-body mode, otherwise the
-    /// body letter and its mass in preset units (e.g. "A 3", "B 4", "C 5").
-    /// In Realistic 3-body mode the masses are real, so they get real units
-    /// (e.g. "A 1 M☉", "B 1 M⊕", "C 0.0123 M⊕").
+    /// Legend label for each body. 2-body mode: the actual masses
+    /// (`config.twoBodyLegendLabels`: slider labels, or the strong-field black
+    /// hole and its orbiter). 3-body mode: the body letter and its mass in preset
+    /// units (e.g. "A 3", "B 4", "C 5"). In Realistic 3-body mode the masses are
+    /// real, so they get real units (e.g. "A 1 M☉", "B 1 M⊕", "C 0.0123 M⊕").
     var bodyLabels: [String] {
-        guard isThreeBodyMode else { return [config.mass1Label, config.mass2Label] }
+        guard isThreeBodyMode else { return config.twoBodyLegendLabels }
         if config.isRealistic {
             return zip(bodyIDs, bodyMasses).map { id, mass in
                 "\(SystemMetrics.letter(for: id)) \(RealUnitsFormatter.mass(mass, scale: config.scale))"
