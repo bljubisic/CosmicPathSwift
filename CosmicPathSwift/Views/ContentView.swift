@@ -52,6 +52,13 @@ struct ContentView: View {
         .sheet(isPresented: $isShowingAdvanced) {
             AdvancedControlsView(viewModel: viewModel)
         }
+        #if DEBUG
+        // App Store screenshots: `-screenshotScene <name>` sets up a scene once the canvas has a size.
+        .onChange(of: canvasSize) { oldSize, newSize in
+            guard oldSize == .zero, newSize != .zero, let scene = ScreenshotScene.fromLaunchArguments else { return }
+            scene.apply(to: viewModel, canvasSize: newSize)
+        }
+        #endif
     }
 
     // MARK: - Portrait Layout
