@@ -422,18 +422,18 @@ enum CelestialConstants {
 
     /// Base simulation mass for 1 M☉.
     /// With G=500, c²=40000: this gives rₛ = 2×500×200/40000 = 5 pixels.
-    static let baseSolarMass: Double = 200.0
+    static let baseSolarMass: Double = ScaleProfile.visual.solarMass
 
     /// Base simulation mass for 1 M⊕.
     /// Compressed ratio (200:5 = 40:1 vs. real 333,000:1) so that Earth
     /// is visible and its gravitational back-reaction on the star is noticeable.
-    static let baseEarthMass: Double = 5.0
+    static let baseEarthMass: Double = ScaleProfile.visual.earthMass
 
     /// 1 AU in simulation pixels.
     /// This is the reference orbital separation for a 1 M☉ + 1 M⊕ system.
     /// At this distance with mass=200, rₛ/r = 5/150 ≈ 0.033, giving
     /// measurable but not extreme relativistic effects.
-    static let baseAU: Double = 150.0
+    static let baseAU: Double = ScaleProfile.visual.au
 
     /// Extra margin factor applied to the initial orbital separation when setting
     /// up the coordinate transformer. Ensures the full orbit (which may be eccentric)
@@ -445,7 +445,7 @@ enum CelestialConstants {
     /// well above the visual threshold of 8 pixels. This makes the
     /// event horizon, photon sphere (188 px), and ISCO (375 px)
     /// clearly visible on screen.
-    static let blackHoleSolarMass: Double = 5000.0
+    static let blackHoleSolarMass: Double = ScaleProfile.visual.blackHoleBaseMass
 }
 
 // MARK: - SimulationConfig
@@ -485,6 +485,20 @@ struct SimulationConfig: Equatable {
     /// `blackHoleSolarMass` (5000), making the Schwarzschild radius large
     /// enough to be visually rendered (rₛ = 125 px at 1× multiplier).
     var isBlackHoleMode: Bool = false
+
+    /// Black hole mass in M☉ in the Realistic strong-field setup (Realistic +
+    /// Black Hole Mode). Kept apart from `mass1Multiplier` so Visual is untouched.
+    var strongFieldBlackHoleMass: Double = ScaleProfile.StrongField.defaultBlackHoleMass
+
+    /// Orbit radius in Schwarzschild radii in the strong-field setup.
+    var strongFieldDistanceRs: Double = ScaleProfile.StrongField.defaultDistanceRs
+
+    /// Which system the strong-field setup shows: the slider-driven stellar
+    /// black hole, or S2 around Sagittarius A*. Kept across Reset, like the 3-body preset.
+    var strongFieldScenario: StrongFieldScenario = .stellarBlackHole
+
+    /// Planet's orbit radius in Schwarzschild radii in the strong-field Planet scenario.
+    var strongFieldPlanetDistanceRs: Double = ScaleProfile.StrongField.defaultPlanetDistanceRs
 
     /// Integration time step per sub-step in simulation time units.
     /// Smaller values improve accuracy but slow the simulation.
@@ -532,22 +546,49 @@ struct SimulationConfig: Equatable {
 
     // MARK: - Derived Simulation Values
 
+    /// Physics scale the simulation runs in: constants, slider-unit conversions
+    /// and size rules, as chosen in the Advanced sheet (issue #21). Realistic
+    /// with Black Hole Mode on (2-body) uses the strong-field profile.
+    var scale: ScaleProfile {
+        guard isStrongField else { return advanced.scale.profile }
+        return isBlackHolePlanet ? .realisticStrongFieldPlanet : .realisticStrongField
+    }
+
+    /// True when running in the Realistic scale.
+    var isRealistic: Bool { advanced.scale == .realistic }
+
     /// The simulation mass for body 1 (central body).
     var simulationMass1: Double {
-        if isBlackHoleMode {
-            return CelestialConstants.blackHoleSolarMass * mass1Multiplier
+        if isStrongField {
+            return strongFieldBlackHoleSolarMasses * scale.solarMass
         }
-        return CelestialConstants.baseSolarMass * mass1Multiplier
+        if isBlackHoleMode {
+            return scale.blackHoleBaseMass * mass1Multiplier
+        }
+        return scale.solarMass * mass1Multiplier
     }
 
     /// The simulation mass for body 2 (orbiting body).
     var simulationMass2: Double {
-        return CelestialConstants.baseEarthMass * mass2Multiplier
+        if isGalacticCenter {
+            return GalacticCenter.starMass * scale.solarMass
+        }
+        return scale.earthMass * mass2Multiplier
     }
 
-    /// The simulation separation in pixels.
+    /// The simulation separation in the scale's length unit (the semi-major
+    /// axis when the orbit is eccentric).
     var simulationSeparation: Double {
-        return CelestialConstants.baseAU * separationAU
+        if isGalacticCenter {
+            return GalacticCenter.semiMajorAxisAU * scale.au
+        }
+        if isBlackHolePlanet {
+            return strongFieldPlanetDistanceRs * strongFieldSchwarzschildRadius
+        }
+        if isStrongField {
+            return strongFieldDistanceRs * strongFieldSchwarzschildRadius
+        }
+        return scale.au * separationAU
     }
 
     /// Orbital inclination converted to radians for physics calculations.
@@ -624,6 +665,9 @@ struct AdvancedSettings: Equatable, Codable, Sendable {
     /// `UserDefaults` key for the opt-in that shows the Advanced button.
     static let optInStorageKey = "advancedMode"
 
+    /// Physics scale (Visual or Realistic). Changing it restarts the setup.
+    var scale: PhysicsScale = .visual
+
     /// Rendering-only options. They take effect immediately, even while running.
     var display = DisplaySettings()
 
@@ -656,6 +700,37 @@ struct TimeSettings: Equatable, Codable, Sendable {
     /// How fast simulated time runs relative to normal.
     /// Achieved with more steps per frame, never larger steps, so accuracy is unchanged.
     var timeSpeed: Double = 1
+
+    /// Simulated time per real second in the Realistic scale, which replaces
+    /// `timeSpeed` there.
+    var realisticRate: RealTimeRate = .oneMonth
+
+    /// Simulated time per real second in the Realistic strong-field setup
+    /// (Black Hole Mode). An 8 rₛ orbit around 10 M☉ takes ≈ 18 ms, so ≈ 1.8 s on screen.
+    var strongFieldRate: RealTimeRate = .tenMilliseconds
+
+    /// Simulated time per real second for S2 around Sgr A*. Its 16-year orbit
+    /// takes 16 s on screen at the default.
+    var galacticCenterRate: RealTimeRate = .oneYear
+
+    /// Simulated time per real second for a planet around a stellar black hole.
+    /// The default 60,000 rₛ orbit takes 3.6 hours, so ≈ 22 s on screen.
+    var blackHolePlanetRate: RealTimeRate = .tenMinutes
+
+    /// The Realistic rate that applies in `regime`.
+    func activeRate(for regime: RateRegime) -> RealTimeRate {
+        self[keyPath: Self.rateKeyPath(for: regime)]
+    }
+
+    /// Where `regime`'s chosen rate is stored, so the Rate picker can bind to it.
+    static func rateKeyPath(for regime: RateRegime) -> WritableKeyPath<TimeSettings, RealTimeRate> {
+        switch regime {
+        case .planetary: return \.realisticRate
+        case .stellarBlackHole: return \.strongFieldRate
+        case .galacticCenter: return \.galacticCenterRate
+        case .blackHolePlanet: return \.blackHolePlanetRate
+        }
+    }
 
     /// Values offered by the Accuracy picker.
     static let timeStepChoices: [Double] = [0.25, 0.5, 1, 2]

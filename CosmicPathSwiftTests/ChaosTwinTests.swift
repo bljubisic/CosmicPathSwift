@@ -108,7 +108,8 @@ struct ChaosTwinViewModelTests {
     private let canvas = CGSize(width: 400, height: 300)
 
     private func makeViewModel(_ recorder: EngineRecorder) -> SimulationViewModel {
-        SimulationViewModel { bodies, _ in
+        SimulationViewModel { setup in
+            let bodies = setup.bodies
             let engine = MockSimulationEngine(bodies: bodies)
             recorder.engines.append(engine)
             return engine

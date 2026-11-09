@@ -55,7 +55,7 @@ struct HabitableZoneProjection: Equatable {
                 center: star.position, normal: normal, radius: radius, samples: ringSamples
             ).map(transformer.simulationToCanvas)
         }
-        let distanceAU = (planet.position - star.position).magnitude / CelestialConstants.baseAU
+        let distanceAU = (planet.position - star.position).magnitude / zone.simulationAU
         return HabitableZoneProjection(
             innerRing: ring(zone.innerPx),
             outerRing: ring(zone.outerPx),

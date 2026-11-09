@@ -176,7 +176,8 @@ struct TimeControlViewModelTests {
 
     private func makeViewModel() -> (SimulationViewModel, EngineBox) {
         let box = EngineBox()
-        let vm = SimulationViewModel { bodies, _ in
+        let vm = SimulationViewModel { setup in
+            let bodies = setup.bodies
             let engine = MockSimulationEngine(bodies: bodies)
             box.engine = engine
             return engine

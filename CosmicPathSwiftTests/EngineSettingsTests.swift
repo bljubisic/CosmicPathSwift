@@ -135,8 +135,8 @@ struct EngineSettingsViewModelTests {
     }
 
     private func makeViewModel(_ recorder: EngineRecorder) -> SimulationViewModel {
-        SimulationViewModel { bodies, settings in
-            let engine = MockSimulationEngine(bodies: bodies, settings: settings)
+        SimulationViewModel { setup in
+            let engine = MockSimulationEngine(bodies: setup.bodies, settings: setup.settings, scale: setup.scale)
             recorder.engines.append(engine)
             return engine
         }

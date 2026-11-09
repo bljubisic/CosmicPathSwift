@@ -331,9 +331,10 @@ struct SimulationCanvasView: View {
         let positions = viewModel.bodyPositions
         let masses = viewModel.bodyMasses
         let scale = CGFloat(viewModel.coordinateScale)
+        let constants = viewModel.config.scale.constants
         return Canvas { context, _ in
             for index in positions.indices where masses.indices.contains(index) {
-                let rs = CGFloat(2 * GravitySimulationEngine.G * masses[index] / GravitySimulationEngine.cSquared) * scale
+                let rs = CGFloat(constants.schwarzschildRadius(mass: masses[index])) * scale
                 guard rs >= 0.5 else { continue }
                 let rect = CGRect(x: positions[index].x - rs, y: positions[index].y - rs, width: rs * 2, height: rs * 2)
                 context.stroke(Path(ellipseIn: rect), with: .color(.red.opacity(0.3)),
@@ -453,14 +454,15 @@ struct SimulationCanvasView: View {
 
     /// Points the grid is pulled toward, with their pull strength in points.
     ///
-    /// 2-body: a single source at body1 with strength mass × zoom × 0.04 (the
-    /// planet's pull is negligible). 3-body: one source per body, mass-weighted
-    /// relative to the heaviest body.
+    /// 2-body (Visual): a single source at body1 with strength mass × zoom × 0.04
+    /// (the planet's pull is negligible). 3-body and the Realistic scale: one
+    /// source per body, mass-weighted relative to the heaviest body (Realistic
+    /// masses are ~1 in M☉, so the Visual formula would leave the grid flat).
     ///
     /// Every strength is multiplied by the Advanced sheet's warp-strength setting.
     private var warpSources: [(center: CGPoint, strength: CGFloat)] {
         let userStrength = CGFloat(display.gridWarpStrength)
-        guard isThreeBody else {
+        guard isThreeBody || viewModel.config.isRealistic else {
             let strength = CGFloat(viewModel.config.simulationMass1) * CGFloat(viewModel.coordinateScale) * 0.04
             return [(viewModel.body1Position, strength * userStrength)]
         }
@@ -523,6 +525,12 @@ struct SimulationCanvasView: View {
                         Text("r\u{209B} = 2GM/c\u{00B2}  r\u{209A}\u{2095} = 1.5r\u{209B}")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.red.opacity(0.3))
+                        if viewModel.config.isStrongField {
+                            // Rings and horizon are at true scale; the disk is decoration.
+                            Text("accretion disk illustrative")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.red.opacity(0.25))
+                        }
                     } else {
                         Text("a = -GM/r\u{00B2} - 3GML\u{00B2}/c\u{00B2}r\u{2074}")
                             .font(.system(size: 10, design: .monospaced))
@@ -579,11 +587,12 @@ struct SimulationCanvasView: View {
     /// Zoom-based size multiplier for celestial bodies.
     /// At the default separation (1 AU), this is 1.0. As the distance increases
     /// and the view zooms out, bodies shrink proportionally (clamped to 40%-100%)
-    /// so they don't dominate the canvas at high zoom-out levels.
+    /// so they don't dominate the canvas at high zoom-out levels. In strong field
+    /// the reference is the orbit itself, since 1 AU there is 10⁸ length units.
     private var zoomSizeScale: CGFloat {
         // coordinateScale is inversely proportional to the viewed extent.
-        // Compute the reference scale at default 1 AU separation.
-        let referenceExtent = CelestialConstants.baseAU * CelestialConstants.orbitMarginFactor
+        // Compute the reference scale at the reference separation.
+        let referenceExtent = viewModel.config.bodySizeReferenceLength * CelestialConstants.orbitMarginFactor
         let minDim = max(min(canvasSize.width, canvasSize.height), 1) // guard against zero
         let halfCanvas = minDim * 0.40
         let referenceScale = halfCanvas / referenceExtent

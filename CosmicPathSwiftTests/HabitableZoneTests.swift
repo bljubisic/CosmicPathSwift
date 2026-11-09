@@ -122,7 +122,7 @@ struct HabitableZoneRingTests {
 struct HabitableZoneViewModelTests {
 
     private func makeViewModel() -> SimulationViewModel {
-        SimulationViewModel { bodies, _ in MockSimulationEngine(bodies: bodies) }
+        SimulationViewModel { MockSimulationEngine(bodies: $0.bodies) }
     }
 
     private let canvas = CGSize(width: 400, height: 300)
@@ -178,7 +178,8 @@ struct HabitableZoneViewModelTests {
     @Test func changingSettingsReprojectsWithoutRestart() throws {
         final class Counter: @unchecked Sendable { var engines = 0 }
         let counter = Counter()
-        let vm = SimulationViewModel { bodies, _ in
+        let vm = SimulationViewModel { setup in
+            let bodies = setup.bodies
             counter.engines += 1
             return MockSimulationEngine(bodies: bodies)
         }

@@ -21,8 +21,11 @@ import SwiftUI
 struct MetricsPanelView: View {
     let viewModel: SimulationViewModel
 
+    private var text: MetricsText { MetricsText(config: viewModel.config) }
+
     var body: some View {
-        Group {
+        VStack(spacing: 3) {
+            ScaleBadgeView(viewModel: viewModel)
             if viewModel.isThreeBodyMode {
                 threeBodyMetrics
             } else {
@@ -38,7 +41,7 @@ struct MetricsPanelView: View {
     private var threeBodyMetrics: some View {
         let metrics = viewModel.systemMetrics
         return HStack(spacing: 0) {
-            metricItem(label: "Time", value: String(format: "%.0f", metrics.elapsedTime), color: .white)
+            metricItem(label: "Time", value: text.elapsedTime(metrics), color: .white)
             Spacer()
             metricItem(
                 label: "\u{0394}E/E (GR)",
@@ -48,13 +51,13 @@ struct MetricsPanelView: View {
             Spacer()
             metricItem(
                 label: "Closest r",
-                value: metrics.closestApproach.isFinite ? String(format: "%.1f", metrics.closestApproach) : "—",
+                value: text.closestApproach(metrics),
                 color: .cyan
             )
             Spacer()
             metricItem(
                 label: "max v/c",
-                value: String(format: "%.3f", metrics.maxVelocityFractionOfC),
+                value: text.velocityFraction(metrics.maxVelocityFractionOfC),
                 color: .green
             )
             Spacer()
@@ -71,49 +74,41 @@ struct MetricsPanelView: View {
     // MARK: - 2-Body Metrics
 
     private var twoBodyMetrics: some View {
-        HStack(spacing: 0) {
-            // Num of orbits completed (integer)
-            metricItem(
-                label: "Orbits",
-                value: String(format: "%d", viewModel.metrics.orbitsCompleted),
-                color: .white
-            )
+        let metrics = viewModel.metrics
+        let orbits = text.orbits(metrics)
+        let lorentz = text.lorentz(metrics)
+        return HStack(spacing: 0) {
+            // Orbits completed (Visual) or elapsed time with the orbit count (Realistic)
+            metricItem(label: orbits.label, value: orbits.value, color: .white)
             // Gravitational time dilation: τ/t = √(1 - rₛ/r)
             metricItem(
                 label: "Time Dilation",
-                value: String(format: "\u{03C4}/t = %.3f", viewModel.metrics.timeDilationFactor),
-                color: viewModel.metrics.timeDilationColor
+                value: text.timeDilation(metrics),
+                color: metrics.timeDilationColor
             )
             Spacer()
-            // Accumulated perihelion precession angle (degrees)
+            // Accumulated perihelion precession angle (degrees, or ″ in Realistic)
             metricItem(
-                label: "Precession",
-                value: String(format: "%.2f\u{00B0}", viewModel.metrics.precessionAngle),
+                label: text.precessionLabel(metrics),
+                value: text.precession(metrics),
                 color: .yellow
             )
             Spacer()
             // Orbital velocity as fraction of c (β = v/c)
             metricItem(
                 label: "v/c",
-                value: String(format: "%.3f", viewModel.metrics.velocityFractionOfC),
+                value: text.velocityFraction(metrics.velocityFractionOfC),
                 color: .green
             )
             Spacer()
             // Context-dependent fourth metric:
-            // Black hole mode → Schwarzschild radius in simulation pixels
+            // Black hole mode → Schwarzschild radius (simulation units, or km in Realistic)
             // Normal mode → Lorentz factor γ = 1/√(1 - v²/c²)
             if viewModel.metrics.isBlackHole {
-                metricItem(
-                    label: "r\u{209B} (px)",
-                    value: String(format: "%.1f", viewModel.metrics.schwarzschildRadius),
-                    color: .red
-                )
+                let rs = text.schwarzschildRadius(metrics)
+                metricItem(label: rs.label, value: rs.value, color: .red)
             } else {
-                metricItem(
-                    label: "Lorentz \u{03B3}",
-                    value: String(format: "%.4f", viewModel.metrics.lorentzGamma),
-                    color: .purple
-                )
+                metricItem(label: lorentz.label, value: lorentz.value, color: .purple)
             }
         }
     }
@@ -124,6 +119,9 @@ struct MetricsPanelView: View {
             Text(value)
                 .font(.system(size: 13, design: .monospaced).bold())
                 .foregroundStyle(color)
+                // Realistic values ("1 − 9.9×10⁻⁹") are longer; shrink rather than wrap.
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
             Text(label)
                 .font(.system(size: 9))
                 .foregroundStyle(.white.opacity(0.5))

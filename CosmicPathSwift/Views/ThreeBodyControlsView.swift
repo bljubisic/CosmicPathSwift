@@ -19,6 +19,12 @@ struct ThreeBodyControlsView: View {
     var body: some View {
         VStack(spacing: 8) {
             presetPicker
+            if viewModel.config.isRealistic && viewModel.config.threeBodyPreset == .sunPlanetMoon {
+                Text(Self.sunEarthMoonCaption)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if viewModel.config.threeBodyPreset == .custom {
                 customSliders
             }
@@ -26,6 +32,10 @@ struct ThreeBodyControlsView: View {
         .disabled(viewModel.isRunning)
         .opacity(viewModel.isRunning ? 0.5 : 1.0)
     }
+
+    /// Shown under the picker for Sun–Planet–Moon in the Realistic scale.
+    static let sunEarthMoonCaption =
+        "Real Sun, Earth and Moon. The Moon's orbit (0.0026 AU) is too small to separate from Earth at this zoom."
 
     // MARK: - Preset Picker
 

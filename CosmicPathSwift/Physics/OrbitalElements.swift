@@ -36,6 +36,9 @@ struct OrbitalElements: Equatable, Sendable {
     let eccentricity: Double
     /// Orbital period 2π√(a³/GM); nil when the orbit is unbound.
     let period: Double?
+    /// Direction of the periapsis (the eccentricity vector) in the orbital
+    /// plane, in radians, measured from `OrbitalPlane.referenceAxis`.
+    let periapsisAngle: Double
 
     /// True for a closed (elliptical) orbit.
     var isBound: Bool { period != nil }
@@ -44,18 +47,80 @@ struct OrbitalElements: Equatable, Sendable {
     ///
     /// ε = v²/2 − μ/r,  a = −μ/(2ε),
     /// e = ((v² − μ/r) r − (r·v) v) / μ,  T = 2π√(a³/μ),  with μ = GM.
-    static func osculating(relativePosition r: Vector3D, relativeVelocity v: Vector3D, totalMass: Double) -> OrbitalElements {
-        let mu = GravitySimulationEngine.G * totalMass
+    static func osculating(
+        relativePosition r: Vector3D,
+        relativeVelocity v: Vector3D,
+        totalMass: Double,
+        constants: PhysicalConstants = .visual
+    ) -> OrbitalElements {
+        let mu = constants.G * totalMass
         let distance = r.magnitude
         guard mu > 0, distance > 0 else {
-            return OrbitalElements(semiMajorAxis: .infinity, eccentricity: .infinity, period: nil)
+            return OrbitalElements(semiMajorAxis: .infinity, eccentricity: .infinity, period: nil, periapsisAngle: 0)
         }
         let speedSquared = v.magnitudeSquared
         let specificEnergy = 0.5 * speedSquared - mu / distance
         let semiMajorAxis = -mu / (2 * specificEnergy)
-        let eVector = (r * (speedSquared - mu / distance) - v * r.dot(v)) * (1 / mu)
+        let eVector = eccentricityVector(r: r, v: v, mu: mu)
         let period = specificEnergy < 0 ? 2 * .pi * sqrt(pow(semiMajorAxis, 3) / mu) : nil
-        return OrbitalElements(semiMajorAxis: semiMajorAxis, eccentricity: eVector.magnitude, period: period)
+        return OrbitalElements(
+            semiMajorAxis: semiMajorAxis, eccentricity: eVector.magnitude, period: period,
+            periapsisAngle: OrbitalPlane(normal: r.cross(v)).angle(of: eVector)
+        )
+    }
+
+    /// e = ((v² − μ/r) r − (r·v) v) / μ, pointing at the periapsis.
+    static func eccentricityVector(r: Vector3D, v: Vector3D, mu: Double) -> Vector3D {
+        (r * (v.magnitudeSquared - mu / r.magnitude) - v * r.dot(v)) * (1 / mu)
+    }
+
+    /// Periapsis direction of the relative state in its orbital plane, in radians.
+    ///
+    /// Unlike the planet's position at a sampled separation minimum, the
+    /// eccentricity vector changes smoothly, so successive values resolve
+    /// precession far below one step's angle (Realistic: 0.1″ per orbit).
+    static func periapsisAngle(
+        relativePosition r: Vector3D,
+        relativeVelocity v: Vector3D,
+        totalMass: Double,
+        constants: PhysicalConstants
+    ) -> Double {
+        let mu = constants.G * totalMass
+        guard mu > 0, r.magnitude > 0 else { return 0 }
+        return OrbitalPlane(normal: r.cross(v)).angle(of: eccentricityVector(r: r, v: v, mu: mu))
+    }
+}
+
+// MARK: - OrbitalPlane
+
+/// In-plane angles for an orbit with angular-momentum direction `normal`.
+///
+/// The reference axis is x̂ projected into the plane (ŷ if the plane is
+/// perpendicular to x̂). The app's orbits are inclined about x̂, so x̂ lies in
+/// the plane and angles match atan2(y, x) for flat orbits.
+struct OrbitalPlane {
+    /// In-plane axis at angle 0.
+    let referenceAxis: Vector3D
+    /// In-plane axis at angle π/2 (normal × referenceAxis).
+    let perpendicularAxis: Vector3D
+
+    /// Below this |x̂ × n̂|, x̂ is too close to the normal to project.
+    private static let degenerateTolerance = 1e-9
+
+    init(normal: Vector3D) {
+        let n = normal.normalized
+        let x = Vector3D(x: 1, y: 0, z: 0)
+        let projected = x - n * x.dot(n)
+        let reference = projected.magnitude > Self.degenerateTolerance
+            ? projected.normalized
+            : Vector3D(x: 0, y: 1, z: 0)
+        referenceAxis = n == .zero ? x : reference
+        perpendicularAxis = n == .zero ? Vector3D(x: 0, y: 1, z: 0) : n.cross(referenceAxis)
+    }
+
+    /// Angle of `vector`'s in-plane component, in (−π, π].
+    func angle(of vector: Vector3D) -> Double {
+        atan2(vector.dot(perpendicularAxis), vector.dot(referenceAxis))
     }
 }
 
@@ -65,12 +130,14 @@ struct OrbitalElements: Equatable, Sendable {
 enum RelativeOrbit {
     /// E = ½v² − GM/r − GML²/(c²r³), with r clamped at the softening length
     /// like the force law.
-    static func energy(r: Vector3D, v: Vector3D, totalMass: Double, softening: Double) -> Double {
-        let gm = GravitySimulationEngine.G * totalMass
+    static func energy(
+        r: Vector3D, v: Vector3D, totalMass: Double, softening: Double, constants: PhysicalConstants = .visual
+    ) -> Double {
+        let gm = constants.G * totalMass
         let distance = max(r.magnitude, softening)
         let l = angularMomentum(r: r, v: v)
         return 0.5 * v.magnitudeSquared - gm / distance
-            - gm * l * l / (GravitySimulationEngine.cSquared * distance * distance * distance)
+            - gm * l * l / (constants.cSquared * distance * distance * distance)
     }
 
     /// Specific angular momentum L = |r × v|.
@@ -94,21 +161,28 @@ struct PrecessionComparison: Equatable, Sendable {
         predictedPerOrbit > 0 ? measuredPerOrbit / predictedPerOrbit : .nan
     }
 
-    init(measuredPerOrbit: Double, totalMass: Double, periapsis: Double, apoapsis: Double) {
+    init(
+        measuredPerOrbit: Double, totalMass: Double, periapsis: Double, apoapsis: Double,
+        constants: PhysicalConstants = .visual
+    ) {
         self.measuredPerOrbit = measuredPerOrbit
-        self.predictedPerOrbit = Self.predicted(totalMass: totalMass, periapsis: periapsis, apoapsis: apoapsis)
+        self.predictedPerOrbit = Self.predicted(
+            totalMass: totalMass, periapsis: periapsis, apoapsis: apoapsis, constants: constants
+        )
     }
 
     /// Weak-field advance per orbit in degrees: Δφ = 6πGM/(c²p), with the
     /// semi-latus rectum p = a(1 − e²) = 2 rₚ rₐ / (rₚ + rₐ) taken from the
     /// measured turning points.
-    static func predicted(totalMass: Double, periapsis: Double, apoapsis: Double) -> Double {
+    static func predicted(
+        totalMass: Double, periapsis: Double, apoapsis: Double, constants: PhysicalConstants = .visual
+    ) -> Double {
         let sum = periapsis + apoapsis
         guard sum > 0 else { return 0 }
         let semiLatusRectum = 2 * periapsis * apoapsis / sum
         guard semiLatusRectum > 0 else { return 0 }
-        let gm = GravitySimulationEngine.G * totalMass
-        let radians = 6 * .pi * gm / (GravitySimulationEngine.cSquared * semiLatusRectum)
+        let gm = constants.G * totalMass
+        let radians = 6 * .pi * gm / (constants.cSquared * semiLatusRectum)
         return radians * 180 / .pi
     }
 }

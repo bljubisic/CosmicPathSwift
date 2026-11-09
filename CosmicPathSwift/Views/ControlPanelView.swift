@@ -142,9 +142,21 @@ struct ControlPanelView: View {
 
     // MARK: - Two-Body Controls
 
-    /// Black hole toggle plus mass, distance, and inclination sliders.
+    /// Black hole toggle plus mass, distance, and inclination sliders. In the
+    /// Realistic scale, Black Hole Mode swaps in the strong-field sliders.
     @ViewBuilder
     private var twoBodyControls: some View {
+        blackHoleToggle
+        habitableZoneToggle
+        if viewModel.config.isStrongField {
+            StrongFieldControlsView(viewModel: viewModel, canvasSize: canvasSize)
+                .disabled(viewModel.isRunning)
+                .opacity(viewModel.isRunning ? 0.5 : 1.0)
+        }
+        parameterSliders
+    }
+
+    private var blackHoleToggle: some View {
         Toggle(isOn: $viewModel.config.isBlackHoleMode) {
             HStack(spacing: 6) {
                 Image(systemName: "circle.fill")
@@ -160,6 +172,9 @@ struct ControlPanelView: View {
         .disabled(viewModel.isRunning)
         .opacity(viewModel.isRunning ? 0.5 : 1.0)
         .onChange(of: viewModel.config.isBlackHoleMode) { _, isBlackHole in
+            if isBlackHole && viewModel.config.isRealistic {
+                viewModel.config.resetStrongFieldParameters()
+            }
             if isBlackHole {
                 viewModel.config.mass1Multiplier = 1.0
                 viewModel.config.separationAU = 1.3
@@ -173,60 +188,16 @@ struct ControlPanelView: View {
             viewModel.config.inclinationDeg = 0.0
             viewModel.applyConfigChange(canvasSize: canvasSize)
         }
+    }
 
-        habitableZoneToggle
-
-        // Parameter sliders (mass/distance use log scale; inclination uses linear)
+    /// Mass and distance use a log scale; inclination is linear. In strong
+    /// field only inclination is shown (`StrongFieldControlsView` has the rest).
+    private var parameterSliders: some View {
         VStack(spacing: 8) {
-            LogSlider(
-                label: viewModel.config.isBlackHoleMode ? "BH Mass" : "Star Mass",
-                value: $viewModel.config.mass1Multiplier,
-                range: 0.1...10,
-                color: viewModel.config.isBlackHoleMode ? .red : .orange,
-                displayText: viewModel.config.mass1Label
-            )
-            LogSlider(
-                label: "Planet Mass",
-                value: $viewModel.config.mass2Multiplier,
-                range: 0.1...10,
-                color: .cyan,
-                displayText: viewModel.config.mass2Label
-            )
-            LogSlider(
-                label: "Distance",
-                value: $viewModel.config.separationAU,
-                // BH mode reaches 5 AU so the planet can sit in the BH's habitable zone.
-                range: (1.0 / 3.0)...(viewModel.config.isBlackHoleMode ? 5.0 : 3.0),
-                color: .white,
-                displayText: viewModel.config.separationLabel
-            )
-            if viewModel.config.isBlackHoleMode {
-                // Accretion-disk brightness as a fraction of the Eddington limit;
-                // sets the black hole's luminosity and so its habitable zone.
-                LogSlider(
-                    label: "Accretion",
-                    value: $viewModel.config.accretionEddingtonFraction,
-                    range: 1e-5...1e-3,
-                    color: .yellow,
-                    displayText: viewModel.config.accretionLabel
-                )
+            if !viewModel.config.isStrongField {
+                massAndDistanceSliders
             }
-
-            // Inclination: linear 0°–90° slider.
-            // Tilts the orbital plane out of the x-y plane. Drag the
-            // canvas to rotate the camera and see the 3D structure.
-            HStack {
-                Text("Inclination")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 90, alignment: .leading)
-                Slider(value: $viewModel.config.inclinationDeg, in: 0...90)
-                    .tint(.purple)
-                Text(viewModel.config.inclinationLabel)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 70, alignment: .trailing)
-            }
+            inclinationSlider
         }
         .disabled(viewModel.isRunning)
         .opacity(viewModel.isRunning ? 0.5 : 1.0)
@@ -244,6 +215,62 @@ struct ControlPanelView: View {
         }
         .onChange(of: viewModel.config.accretionEddingtonFraction) { _, _ in
             viewModel.applyConfigChange(canvasSize: canvasSize)
+        }
+    }
+
+    /// Star (or BH) mass, planet mass, distance and, in BH mode, accretion.
+    @ViewBuilder
+    private var massAndDistanceSliders: some View {
+        LogSlider(
+            label: viewModel.config.isBlackHoleMode ? "BH Mass" : "Star Mass",
+            value: $viewModel.config.mass1Multiplier,
+            range: 0.1...10,
+            color: viewModel.config.isBlackHoleMode ? .red : .orange,
+            displayText: viewModel.config.mass1Label
+        )
+        LogSlider(
+            label: "Planet Mass",
+            value: $viewModel.config.mass2Multiplier,
+            range: 0.1...10,
+            color: .cyan,
+            displayText: viewModel.config.mass2Label
+        )
+        LogSlider(
+            label: "Distance",
+            value: $viewModel.config.separationAU,
+            // BH mode reaches 5 AU so the planet can sit in the BH's habitable zone.
+            range: (1.0 / 3.0)...(viewModel.config.isBlackHoleMode ? 5.0 : 3.0),
+            color: .white,
+            displayText: viewModel.config.separationLabel
+        )
+        if viewModel.config.isBlackHoleMode {
+            // Accretion-disk brightness as a fraction of the Eddington limit;
+            // sets the black hole's luminosity and so its habitable zone.
+            LogSlider(
+                label: "Accretion",
+                value: $viewModel.config.accretionEddingtonFraction,
+                range: 1e-5...1e-3,
+                color: .yellow,
+                displayText: viewModel.config.accretionLabel
+            )
+        }
+    }
+
+    private var inclinationSlider: some View {
+        // Inclination: linear 0°–90° slider.
+        // Tilts the orbital plane out of the x-y plane. Drag the
+        // canvas to rotate the camera and see the 3D structure.
+        HStack {
+            Text("Inclination")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(width: 90, alignment: .leading)
+            Slider(value: $viewModel.config.inclinationDeg, in: 0...90)
+                .tint(.purple)
+            Text(viewModel.config.inclinationLabel)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(width: 70, alignment: .trailing)
         }
     }
 

@@ -2,8 +2,8 @@
 //  PhysicsSettingsSection.swift
 //  CosmicPathSwift
 //
-//  "Physics" section of the Advanced sheet (issue #20, PR 5): integrator,
-//  softening length, and the 3-body collision mode. These are baked into the
+//  "Physics" section of the Advanced sheet (issue #20, PR 5): physics scale
+//  (issue #21), integrator, softening length, and the 3-body collision mode. These are baked into the
 //  engine when it is created, so changing one restarts the simulation and
 //  they can only be edited while paused.
 //
@@ -17,8 +17,13 @@ struct PhysicsSettingsSection: View {
 
     var body: some View {
         Section {
+            scalePicker
             integratorPicker
-            softeningPicker
+            if viewModel.config.isRealistic {
+                fixedSofteningRow
+            } else {
+                softeningPicker
+            }
             if viewModel.isThreeBodyMode {
                 collisionPicker
             }
@@ -28,6 +33,39 @@ struct PhysicsSettingsSection: View {
             Text("Changing these restarts the simulation, so they can only be edited while paused.")
         }
         .disabled(viewModel.isRunning)
+    }
+
+    private var scalePicker: some View {
+        CaptionedRow(
+            "Scale",
+            caption: "Visual magnifies GR about a million times so it shows on screen. Realistic uses the real G, c, masses and distances (AU, M☉, days): GR is then far too small to see, but the numbers are real."
+        ) {
+            Picker("Scale", selection: scaleBinding) {
+                ForEach(PhysicsScale.allCases, id: \.self) { scale in
+                    Text(scale.displayName).tag(scale)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    /// Goes through `selectScale`; in Realistic, Black Hole Mode selects the strong-field setup.
+    private var scaleBinding: Binding<PhysicsScale> {
+        Binding(
+            get: { viewModel.config.advanced.scale },
+            set: { viewModel.selectScale($0) }
+        )
+    }
+
+    private var fixedSofteningRow: some View {
+        CaptionedRow(
+            "Softening",
+            caption: viewModel.config.isStrongField
+                ? "Fixed at 1.5 m (10⁻³ GM☉/c²), far below the horizon. Units: GM☉/c² = 1.48 km, GM☉/c³ = 4.93 µs."
+                : "Fixed at 150 km (10⁻⁶ AU), far below any star or planet; collisions use physical radii."
+        ) {
+            EmptyView()
+        }
     }
 
     private var integratorPicker: some View {
