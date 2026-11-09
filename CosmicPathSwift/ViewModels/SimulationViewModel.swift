@@ -204,7 +204,8 @@ class SimulationViewModel {
     /// Habitable zone of body1 in 2-body mode, or nil in 3-body mode or when hidden.
     /// Depends only on config, so it is constant during a run.
     var habitableZone: HabitableZone? {
-        guard !isThreeBodyMode, config.showHabitableZone else { return nil }
+        // S2 is a star orbiting Sgr A*, not a planet: no habitable zone there.
+        guard !isThreeBodyMode, !config.isGalacticCenter, config.showHabitableZone else { return nil }
         return HabitableZone.forCentralBody(of: config)
     }
 
@@ -385,6 +386,7 @@ class SimulationViewModel {
         var defaults = SimulationConfig()
         defaults.mode = config.mode
         defaults.threeBodyPreset = config.threeBodyPreset
+        defaults.strongFieldScenario = config.strongFieldScenario
         defaults.advanced = config.advanced
         config = defaults
         applyIntegrationSettings()
@@ -435,7 +437,7 @@ class SimulationViewModel {
     /// "1 s = X" rate the Realistic scale runs at: the strong-field rate in
     /// Black Hole Mode, the planetary rate otherwise.
     var activeRealTimeRate: RealTimeRate {
-        config.advanced.time.activeRate(strongField: config.isStrongField)
+        config.advanced.time.activeRate(for: config.rateRegime)
     }
 
     /// Shows or hides the habitable zone. Only affects rendering, so it works

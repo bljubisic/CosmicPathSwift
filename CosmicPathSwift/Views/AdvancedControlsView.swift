@@ -104,7 +104,7 @@ struct AdvancedControlsView: View {
             caption: "Simulated time per real second. Faster rates run more steps per frame, never larger steps."
         ) {
             Picker("Rate", selection: rateBinding) {
-                ForEach(RealTimeRate.choices(strongField: viewModel.config.isStrongField), id: \.self) { rate in
+                ForEach(RealTimeRate.choices(for: viewModel.config.rateRegime), id: \.self) { rate in
                     Text(rate.label).tag(rate)
                 }
             }
@@ -118,11 +118,10 @@ struct AdvancedControlsView: View {
         }
     }
 
-    /// The planetary or strong-field rate, whichever the current setup uses.
+    /// The rate of whichever regime the current setup uses (planetary, stellar
+    /// black hole, or S2 around Sgr A*).
     private var rateBinding: Binding<RealTimeRate> {
-        viewModel.config.isStrongField
-            ? $viewModel.config.advanced.time.strongFieldRate
-            : $viewModel.config.advanced.time.realisticRate
+        $viewModel.config.advanced.time[dynamicMember: TimeSettings.rateKeyPath(for: viewModel.config.rateRegime)]
     }
 
     private var stepButton: some View {
@@ -155,11 +154,15 @@ struct AdvancedControlsView: View {
     @ViewBuilder
     private var orbitShapeControls: some View {
         let initial = $viewModel.config.advanced.initial
+        let isGalacticCenter = viewModel.config.isGalacticCenter
         captionedRow(
-            String(format: "Eccentricity: %.2f", initial.eccentricity.wrappedValue),
-            caption: "Ellipse shape. Distance is the average size a; the planet starts at its closest point, a(1 − e). Higher values make the perihelion precession easier to see."
+            String(format: "Eccentricity: %.2f", viewModel.config.orbitEccentricity),
+            caption: isGalacticCenter
+                ? "S2 uses its observed eccentricity, 0.884. Switch to Probe or Planet to set your own."
+                : "Ellipse shape. Distance is the average size a; the planet starts at its closest point, a(1 − e). Higher values make the perihelion precession easier to see."
         ) {
             Slider(value: initial.eccentricity, in: InitialConditionSettings.eccentricityRange, step: 0.05)
+                .disabled(isGalacticCenter)
             if let warning = viewModel.periapsisWarning {
                 Text(warning)
                     .font(.caption)

@@ -125,7 +125,7 @@ enum InitialConditions {
         // Only prevent numerical blow-up at very small separations; no ISCO floor,
         // so the user can create genuinely unstable/plunging orbits.
         let rs = config.scale.constants.schwarzschildRadius(mass: mass1)
-        let eccentricity = clampedEccentricity(initial.eccentricity)
+        let eccentricity = clampedEccentricity(config.orbitEccentricity)
         let separation = periapsisDistance(config: config)
 
         let orbitalSpeed: Double
@@ -216,7 +216,7 @@ enum InitialConditions {
     static func periapsisDistance(config: SimulationConfig) -> Double {
         let minimum = minimumStartDistance(config: config)
         let semiMajorAxis = max(config.simulationSeparation, minimum)
-        let eccentricity = clampedEccentricity(config.advanced.initial.eccentricity)
+        let eccentricity = clampedEccentricity(config.orbitEccentricity)
         return max(semiMajorAxis * (1 - eccentricity), minimum)
     }
 
@@ -236,7 +236,8 @@ enum InitialConditions {
     /// these (e.g. the default black hole orbit, inside the ISCO on purpose) gives
     /// no warning, since the eccentricity isn't what causes it.
     static func periapsisWarning(config: SimulationConfig) -> String? {
-        guard config.mode == .twoBody, config.advanced.initial.eccentricity > 0 else { return nil }
+        // S2's orbit is fixed and far outside every danger radius, so there is nothing to warn about.
+        guard config.mode == .twoBody, !config.isGalacticCenter, config.orbitEccentricity > 0 else { return nil }
         var circular = config
         circular.advanced.initial.eccentricity = 0
 

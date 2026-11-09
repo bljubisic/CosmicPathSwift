@@ -74,7 +74,7 @@ struct HabitableZone: Equatable, Sendable {
     /// Advanced sheet (`config.advanced.habitableZone`).
     static func forCentralBody(of config: SimulationConfig) -> HabitableZone {
         // In M☉: the strong-field BH Mass slider is in real solar masses already.
-        let mass = config.isStrongField ? config.strongFieldBlackHoleMass : config.mass1Multiplier
+        let mass = config.isStrongField ? config.strongFieldBlackHoleSolarMasses : config.mass1Multiplier
         let luminosity = config.isBlackHoleMode
             ? HabitableZonePhysics.blackHoleLuminosity(solarMasses: mass, eddingtonFraction: config.accretionEddingtonFraction)
             : HabitableZonePhysics.starLuminosity(solarMasses: mass)

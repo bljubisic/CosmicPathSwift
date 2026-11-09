@@ -31,14 +31,19 @@ struct ScaleBadgeView: View {
             let factor = ScaleComparison.grMagnification(config: config)
             return "Visual · GR magnified ≈ \(RealUnitsFormatter.magnification(factor))"
         case .realistic:
-            let blackHole = config.isStrongField ? "\(config.strongFieldMassLabel) black hole · " : ""
+            let blackHole: String
+            if config.isGalacticCenter {
+                blackHole = "S2 around Sgr A* · "
+            } else {
+                blackHole = config.isStrongField ? "\(config.strongFieldMassLabel) black hole · " : ""
+            }
             return "Realistic · \(blackHole)\(rateText(config: config, achievedRate: achievedRate)) · sizes not to scale"
         }
     }
 
     private static func rateText(config: SimulationConfig, achievedRate: Double?) -> String {
         guard let achievedRate else {
-            return config.advanced.time.activeRate(strongField: config.isStrongField).label
+            return config.advanced.time.activeRate(for: config.rateRegime).label
         }
         return "1 s = " + RealUnitsFormatter.duration(achievedRate / config.scale.units.secondsPerTime,
                                                       units: config.scale.units) + " (CPU-limited)"

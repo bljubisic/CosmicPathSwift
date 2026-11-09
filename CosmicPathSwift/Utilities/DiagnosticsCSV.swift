@@ -43,7 +43,7 @@ enum DiagnosticsCSV {
                 ("mass2_earth", number(config.mass2Multiplier)),
                 ("black_hole_mode", String(config.isBlackHoleMode)),
                 ("separation_AU", number(config.separationAU)),
-                ("eccentricity", number(config.advanced.initial.eccentricity)),
+                ("eccentricity", number(config.orbitEccentricity)),
                 ("inclination_deg", number(config.inclinationDeg))
             ]
         case .threeBody:

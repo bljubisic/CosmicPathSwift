@@ -15,13 +15,35 @@
 //  so the horizon, photon sphere and ISCO radii are exact; its circular
 //  periods near the hole are shorter than GR's (29% at the ISCO).
 //
+//  `realisticStrongFieldPlanet` (PR 5) is the same scale with a real rocky
+//  planet instead of the point-mass probe, so tides can tear it apart.
+//
 
 import Foundation
 
 extension ScaleProfile {
 
-    /// Real constants in GM☉/c², M☉ and GM☉/c³ (G = c = 1).
-    static let realisticStrongField: ScaleProfile = {
+    /// Real constants in GM☉/c², M☉ and GM☉/c³ (G = c = 1), with a point-mass probe.
+    static let realisticStrongField = strongField(
+        // The orbiter is a compact probe: no Roche limit, no tidal stripping.
+        planetRadius: .pointMass,
+        unitsDescription: "GM☉/c², M☉, GM☉/c³ (G = c = 1)"
+    )
+
+    /// The same units with a rocky planet (R ∝ M^0.27, like the planetary
+    /// scale), so the Roche limit and tidal stripping apply. An Earth-mass
+    /// planet is torn apart about 40,600 rₛ from a 10 M☉ black hole.
+    static let realisticStrongFieldPlanet = strongField(
+        planetRadius: .massPower(
+            radiusAtEarthMass: SIConstants.earthRadius / SIConstants.solarGravitationalLength,
+            earthMass: SIConstants.earthMass / SIConstants.solarMass,
+            exponent: Realistic.planetRadiusExponent,
+            massFloor: SIConstants.earthMass / SIConstants.solarMass * Realistic.planetMassFloorFraction
+        ),
+        unitsDescription: "GM☉/c², M☉, GM☉/c³ (G = c = 1), rocky planet"
+    )
+
+    private static func strongField(planetRadius: PlanetRadiusRule, unitsDescription: String) -> ScaleProfile {
         let lengthUnit = SIConstants.solarGravitationalLength
         return ScaleProfile(
             constants: PhysicalConstants(G: 1, c: 1),
@@ -38,15 +60,14 @@ extension ScaleProfile {
             blackHoleBaseMass: 1,
             defaultSoftening: StrongField.softening,
             blackHoleRule: .byObjectType,
-            // The orbiter is a compact probe: no Roche limit, no tidal stripping.
-            planetRadius: .pointMass,
+            planetRadius: planetRadius,
             // Unused: Black Hole Mode is always on here, so there is no star surface.
             starRadius: .schwarzschildOrSoftening,
             softeningRule: .fixed(StrongField.softening),
             perihelionMethod: .eccentricityVector,
-            unitsDescription: "GM☉/c², M☉, GM☉/c³ (G = c = 1)"
+            unitsDescription: unitsDescription
         )
-    }()
+    }
 
     /// Tuning values and slider ranges of the strong-field profile.
     enum StrongField {
@@ -60,5 +81,12 @@ extension ScaleProfile {
         static let defaultBlackHoleMass: Double = 10
         /// Default orbit radius, in rₛ: stable, with a strongly precessing rosette.
         static let defaultDistanceRs: Double = 8
+        /// Planet scenario's Distance slider range, in rₛ. The Roche limit of an
+        /// Earth-mass planet is ≈ 90,000 rₛ at 3 M☉ and ≈ 8,800 rₛ at 100 M☉,
+        /// so both sides of it are reachable for every black hole mass.
+        static let planetDistanceRangeRs: ClosedRange<Double> = 1_000...300_000
+        /// Default planet orbit, in rₛ: about 1.5× the Roche limit of an Earth-mass
+        /// planet around the default 10 M☉, so it survives (a 3.6-hour orbit).
+        static let defaultPlanetDistanceRs: Double = 60_000
     }
 }

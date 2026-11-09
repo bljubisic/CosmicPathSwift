@@ -493,6 +493,13 @@ struct SimulationConfig: Equatable {
     /// Orbit radius in Schwarzschild radii in the strong-field setup.
     var strongFieldDistanceRs: Double = ScaleProfile.StrongField.defaultDistanceRs
 
+    /// Which system the strong-field setup shows: the slider-driven stellar
+    /// black hole, or S2 around Sagittarius A*. Kept across Reset, like the 3-body preset.
+    var strongFieldScenario: StrongFieldScenario = .stellarBlackHole
+
+    /// Planet's orbit radius in Schwarzschild radii in the strong-field Planet scenario.
+    var strongFieldPlanetDistanceRs: Double = ScaleProfile.StrongField.defaultPlanetDistanceRs
+
     /// Integration time step per sub-step in simulation time units.
     /// Smaller values improve accuracy but slow the simulation.
     var timeStep: Double = 0.02
@@ -543,7 +550,8 @@ struct SimulationConfig: Equatable {
     /// and size rules, as chosen in the Advanced sheet (issue #21). Realistic
     /// with Black Hole Mode on (2-body) uses the strong-field profile.
     var scale: ScaleProfile {
-        isStrongField ? .realisticStrongField : advanced.scale.profile
+        guard isStrongField else { return advanced.scale.profile }
+        return isBlackHolePlanet ? .realisticStrongFieldPlanet : .realisticStrongField
     }
 
     /// True when running in the Realistic scale.
@@ -552,7 +560,7 @@ struct SimulationConfig: Equatable {
     /// The simulation mass for body 1 (central body).
     var simulationMass1: Double {
         if isStrongField {
-            return strongFieldBlackHoleMass * scale.solarMass
+            return strongFieldBlackHoleSolarMasses * scale.solarMass
         }
         if isBlackHoleMode {
             return scale.blackHoleBaseMass * mass1Multiplier
@@ -562,11 +570,21 @@ struct SimulationConfig: Equatable {
 
     /// The simulation mass for body 2 (orbiting body).
     var simulationMass2: Double {
+        if isGalacticCenter {
+            return GalacticCenter.starMass * scale.solarMass
+        }
         return scale.earthMass * mass2Multiplier
     }
 
-    /// The simulation separation in the scale's length unit.
+    /// The simulation separation in the scale's length unit (the semi-major
+    /// axis when the orbit is eccentric).
     var simulationSeparation: Double {
+        if isGalacticCenter {
+            return GalacticCenter.semiMajorAxisAU * scale.au
+        }
+        if isBlackHolePlanet {
+            return strongFieldPlanetDistanceRs * strongFieldSchwarzschildRadius
+        }
         if isStrongField {
             return strongFieldDistanceRs * strongFieldSchwarzschildRadius
         }
@@ -691,9 +709,27 @@ struct TimeSettings: Equatable, Codable, Sendable {
     /// (Black Hole Mode). An 8 rₛ orbit around 10 M☉ takes ≈ 18 ms, so ≈ 1.8 s on screen.
     var strongFieldRate: RealTimeRate = .tenMilliseconds
 
-    /// The Realistic rate that applies: `strongFieldRate` in strong field, else `realisticRate`.
-    func activeRate(strongField: Bool) -> RealTimeRate {
-        strongField ? strongFieldRate : realisticRate
+    /// Simulated time per real second for S2 around Sgr A*. Its 16-year orbit
+    /// takes 16 s on screen at the default.
+    var galacticCenterRate: RealTimeRate = .oneYear
+
+    /// Simulated time per real second for a planet around a stellar black hole.
+    /// The default 60,000 rₛ orbit takes 3.6 hours, so ≈ 22 s on screen.
+    var blackHolePlanetRate: RealTimeRate = .tenMinutes
+
+    /// The Realistic rate that applies in `regime`.
+    func activeRate(for regime: RateRegime) -> RealTimeRate {
+        self[keyPath: Self.rateKeyPath(for: regime)]
+    }
+
+    /// Where `regime`'s chosen rate is stored, so the Rate picker can bind to it.
+    static func rateKeyPath(for regime: RateRegime) -> WritableKeyPath<TimeSettings, RealTimeRate> {
+        switch regime {
+        case .planetary: return \.realisticRate
+        case .stellarBlackHole: return \.strongFieldRate
+        case .galacticCenter: return \.galacticCenterRate
+        case .blackHolePlanet: return \.blackHolePlanetRate
+        }
     }
 
     /// Values offered by the Accuracy picker.

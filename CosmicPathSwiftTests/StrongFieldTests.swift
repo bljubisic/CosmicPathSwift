@@ -284,7 +284,7 @@ struct StrongFieldTimingTests {
     @Test func tenMillisecondsPerSecondPlansAboutSixteenStepsPerFrame() {
         let config = StrongField.config()
         let timeStep = config.timeStep * ScenarioTiming.timeRatio(config: config)
-        let rate = config.advanced.time.activeRate(strongField: true)
+        let rate = config.advanced.time.activeRate(for: .stellarBlackHole)
         #expect(rate == .tenMilliseconds)
 
         var planner = FrameStepPlanner()
@@ -301,10 +301,10 @@ struct StrongFieldTimingTests {
     }
 
     @Test func rateChoicesDependOnTheRegime() {
-        #expect(RealTimeRate.choices(strongField: true).contains(.tenMilliseconds))
-        #expect(!RealTimeRate.choices(strongField: true).contains(.oneMonth))
-        #expect(RealTimeRate.choices(strongField: false).contains(.oneMonth))
-        #expect(!RealTimeRate.choices(strongField: false).contains(.oneMillisecond))
+        #expect(RealTimeRate.choices(for: .stellarBlackHole).contains(.tenMilliseconds))
+        #expect(!RealTimeRate.choices(for: .stellarBlackHole).contains(.oneMonth))
+        #expect(RealTimeRate.choices(for: .planetary).contains(.oneMonth))
+        #expect(!RealTimeRate.choices(for: .planetary).contains(.oneMillisecond))
         #expect(abs(RealTimeRate.tenMicroseconds.simulatedSecondsPerSecond - 1e-5) < 1e-18)
         #expect(RealTimeRate.oneMillisecond.label == "1 s = 1 ms")
     }

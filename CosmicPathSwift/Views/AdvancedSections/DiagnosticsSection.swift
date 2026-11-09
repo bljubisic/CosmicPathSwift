@@ -73,8 +73,10 @@ struct DiagnosticsSection: View {
 
     @ViewBuilder
     private var precessionRow: some View {
-        // Strong-field precession is degrees per orbit, like Visual's.
-        if viewModel.config.isRealistic && !viewModel.config.isStrongField {
+        // Strong-field precession is degrees per orbit, like Visual's; S2's is arcminutes.
+        if viewModel.config.isGalacticCenter {
+            galacticCenterPrecessionRow
+        } else if viewModel.config.isRealistic && !viewModel.config.isStrongField {
             realisticPrecessionRow
         } else {
             visualPrecessionRow
@@ -88,8 +90,8 @@ struct DiagnosticsSection: View {
         ) {
             if let comparison = viewModel.precessionComparison {
                 HStack {
-                    valueColumn("Measured", String(format: "%.2f°", comparison.measuredPerOrbit))
-                    valueColumn("Predicted", String(format: "%.2f°", comparison.predictedPerOrbit))
+                    valueColumn("Measured", angleText(degrees: comparison.measuredPerOrbit))
+                    valueColumn("Predicted", angleText(degrees: comparison.predictedPerOrbit))
                     valueColumn("Ratio", String(format: "×%.3f", comparison.ratio))
                 }
             } else {
@@ -98,11 +100,47 @@ struct DiagnosticsSection: View {
         }
     }
 
+    /// Degrees, or arcseconds for the planet around a stellar black hole, whose
+    /// precession is tens of arcseconds per orbit.
+    private func angleText(degrees: Double) -> String {
+        Self.angleText(degrees: degrees, arcseconds: viewModel.config.isBlackHolePlanet)
+    }
+
+    static func angleText(degrees: Double, arcseconds: Bool) -> String {
+        arcseconds ? RealUnitsFormatter.arcseconds(degrees: degrees) : String(format: "%.2f°", degrees)
+    }
+
     private var visualPrecessionCaption: String {
+        if viewModel.config.isBlackHolePlanet {
+            return "6πGM/(c²a(1−e²)), GR's weak-field formula, is accurate this far from the hole. At the default accuracy the integrator's own error makes the measurement about 15% low; Yoshida 4 at Accuracy ×¼ is within a few percent."
+        }
         if viewModel.config.isStrongField {
             return "6πGM/(c²a(1−e²)) is the weak-field formula. Close to the hole the next-order term, about (18+e²)/4 · GM/(c²p), grows large: widen the orbit to see them converge."
         }
         return "6πGM/(c²a(1−e²)) is the weak-field formula. With the app's strong GR, the next-order term adds about (18+e²)/4 · GM/(c²p): roughly 8% at 1 AU. Widen the orbit to see them converge."
+    }
+
+    /// S2 around Sgr A*: arcminutes per orbit, next to GR's prediction.
+    private var galacticCenterPrecessionRow: some View {
+        CaptionedRow(
+            "Precession per Orbit",
+            caption: "GR predicts 6πGM/(c²a(1−e²)) ≈ 12′ per 16-year orbit. The GRAVITY collaboration measured S2's precession in 2020 and found it agrees with GR."
+        ) {
+            if let comparison = viewModel.precessionComparison {
+                HStack {
+                    valueColumn("Measured", Self.arcminutes(degrees: comparison.measuredPerOrbit))
+                    valueColumn("Predicted", Self.arcminutes(degrees: comparison.predictedPerOrbit))
+                    valueColumn("Ratio", String(format: "×%.3f", comparison.ratio))
+                }
+            } else {
+                Text("— (after the first full orbit, 16 years)").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// An angle in arcminutes, e.g. "12.2′".
+    static func arcminutes(degrees: Double) -> String {
+        String(format: "%.1f\u{2032}", degrees * 60)
     }
 
     /// Realistic: arcseconds per orbit and per century, measured next to GR's prediction.

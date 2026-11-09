@@ -7,6 +7,10 @@
 //  geometric units (`ScaleProfile.realisticStrongField`), the BH Mass slider is
 //  in real M☉ and the Distance slider in Schwarzschild radii.
 //
+//  Three scenarios (`StrongFieldScenario`): a point-mass probe a few rₛ out
+//  (strong-field GR), a rocky planet thousands of rₛ out (tides), and S2
+//  around Sagittarius A* (`GalacticCenter`), with fixed observed values.
+//
 
 import Foundation
 
@@ -17,11 +21,39 @@ extension SimulationConfig {
         isRealistic && mode == .twoBody && isBlackHoleMode
     }
 
+    /// True when the strong-field setup shows S2 around Sagittarius A*.
+    var isGalacticCenter: Bool {
+        isStrongField && strongFieldScenario == .sagittariusAStar
+    }
+
+    /// True when the strong-field setup shows a rocky planet around a stellar black hole.
+    var isBlackHolePlanet: Bool {
+        isStrongField && strongFieldScenario == .blackHolePlanet
+    }
+
+    /// Mass of the strong-field black hole in M☉: the BH Mass slider, or Sgr A*.
+    var strongFieldBlackHoleSolarMasses: Double {
+        strongFieldScenario == .sagittariusAStar ? GalacticCenter.blackHoleMass : strongFieldBlackHoleMass
+    }
+
     /// rₛ = 2GM/c² of the strong-field black hole, in GM☉/c² (= 2M with G = c = 1).
     var strongFieldSchwarzschildRadius: Double {
         ScaleProfile.realisticStrongField.constants.schwarzschildRadius(
-            mass: strongFieldBlackHoleMass * ScaleProfile.realisticStrongField.solarMass
+            mass: strongFieldBlackHoleSolarMasses * ScaleProfile.realisticStrongField.solarMass
         )
+    }
+
+    /// Which family of Realistic time rates applies to this setup.
+    var rateRegime: RateRegime {
+        if isGalacticCenter { return .galacticCenter }
+        if isBlackHolePlanet { return .blackHolePlanet }
+        return isStrongField ? .stellarBlackHole : .planetary
+    }
+
+    /// Eccentricity of the 2-body starting orbit: S2's observed value, or the
+    /// Advanced sheet's Eccentricity slider.
+    var orbitEccentricity: Double {
+        isGalacticCenter ? GalacticCenter.eccentricity : advanced.initial.eccentricity
     }
 
     /// Length the canvas sizes bodies against: the default orbit's 1 AU, or the
@@ -36,13 +68,27 @@ extension SimulationConfig {
         let defaults = SimulationConfig()
         strongFieldBlackHoleMass = defaults.strongFieldBlackHoleMass
         strongFieldDistanceRs = defaults.strongFieldDistanceRs
+        strongFieldPlanetDistanceRs = defaults.strongFieldPlanetDistanceRs
+    }
+
+    /// Roche limit of the planet in the Planet scenario, in rₛ: inside it,
+    /// tides strip the planet. Barely depends on the planet's mass, because a
+    /// heavier rocky planet is also larger (R ∝ M^0.27 against the limit's M^-⅓).
+    var blackHolePlanetRocheLimitRs: Double {
+        let profile = ScaleProfile.realisticStrongFieldPlanet
+        let blackHole = strongFieldBlackHoleMass * profile.solarMass
+        let planet = profile.earthMass * mass2Multiplier
+        return profile.rocheLimit(centralMass: blackHole, planetMass: planet) / strongFieldSchwarzschildRadius
     }
 
     // MARK: - Labels
 
-    /// BH Mass slider text, e.g. "10 M☉".
+    /// BH Mass text, e.g. "10 M☉", or "4.3 million M☉" for Sgr A*.
     var strongFieldMassLabel: String {
-        String(format: strongFieldBlackHoleMass < 10 ? "%.1f M\u{2609}" : "%.0f M\u{2609}", strongFieldBlackHoleMass)
+        if strongFieldScenario == .sagittariusAStar {
+            return String(format: "%.1f million M\u{2609}", GalacticCenter.blackHoleMass / 1e6)
+        }
+        return String(format: strongFieldBlackHoleMass < 10 ? "%.1f M\u{2609}" : "%.0f M\u{2609}", strongFieldBlackHoleMass)
     }
 
     /// Distance slider text, e.g. "8.0 rₛ".
@@ -50,11 +96,30 @@ extension SimulationConfig {
         String(format: strongFieldDistanceRs < 10 ? "%.1f r\u{209B}" : "%.0f r\u{209B}", strongFieldDistanceRs)
     }
 
-    /// A simulation length in the units the user set it in: "2.50 rₛ" in
-    /// strong field, "0.39 AU" otherwise.
+    /// Planet Distance slider text, e.g. "60,000 rₛ".
+    var strongFieldPlanetDistanceLabel: String {
+        Self.groupedInteger(strongFieldPlanetDistanceRs) + " r\u{209B}"
+    }
+
+    /// A whole number with comma thousands separators ("40,625"), independent of locale.
+    static func groupedInteger(_ value: Double) -> String {
+        let digits = String(Int(value.rounded()))
+        var grouped = ""
+        for (index, digit) in digits.reversed().enumerated() {
+            if index > 0 && index % 3 == 0 { grouped.append(",") }
+            grouped.append(digit)
+        }
+        return String(grouped.reversed())
+    }
+
+    /// A simulation length in the units the user set it in: "2.50 rₛ" near a
+    /// stellar black hole, "0.39 AU" otherwise (including S2, whose orbit is
+    /// thousands of rₛ across and quoted in AU).
     func distanceLabel(simulationLength length: Double) -> String {
-        if isStrongField {
-            return String(format: "%.2f r\u{209B}", length / strongFieldSchwarzschildRadius)
+        if isStrongField && !isGalacticCenter {
+            let radii = length / strongFieldSchwarzschildRadius
+            // Planet orbits are thousands of rₛ: decimals would only add noise.
+            return radii < 1_000 ? String(format: "%.2f r\u{209B}", radii) : Self.groupedInteger(radii) + " r\u{209B}"
         }
         return String(format: "%.2f AU", length / scale.au)
     }
