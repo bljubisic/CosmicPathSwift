@@ -20,6 +20,8 @@ enum ScreenshotScene: String, CaseIterable {
     case planetDisruption
     /// S2 on its observed orbit around Sagittarius A*.
     case s2
+    /// Pythagorean three-body problem, nudged by 10⁻⁶ next to its unperturbed twin.
+    case threeBodyChaos
 
     /// The scene named by the `-screenshotScene` launch argument, if any.
     static var fromLaunchArguments: ScreenshotScene? {
@@ -30,7 +32,7 @@ enum ScreenshotScene: String, CaseIterable {
     @MainActor
     func apply(to viewModel: SimulationViewModel, canvasSize: CGSize) {
         var config = SimulationConfig()
-        config.isBlackHoleMode = true
+        config.isBlackHoleMode = self != .threeBodyChaos
         switch self {
         case .blackHoleVisual:
             // Black Hole Mode's own defaults (ControlPanelView's toggle sets these).
@@ -48,10 +50,19 @@ enum ScreenshotScene: String, CaseIterable {
             config.strongFieldScenario = .sagittariusAStar
             // A full 16-year orbit in under 2 s, so the trail shows the whole ellipse.
             config.advanced.time.galacticCenterRate = .tenYears
+        case .threeBodyChaos:
+            config.advanced.initial.chaosEpsilon = 1e-6
+            config.advanced.initial.showUnperturbedTwin = true
         }
         viewModel.pause()
         viewModel.config = config
-        viewModel.applyConfigChange(canvasSize: canvasSize)
+        if self == .threeBodyChaos {
+            // selectMode / selectPreset also apply the preset's own time step.
+            viewModel.selectMode(.threeBody, canvasSize: canvasSize)
+            viewModel.selectPreset(.pythagorean, canvasSize: canvasSize)
+        } else {
+            viewModel.applyConfigChange(canvasSize: canvasSize)
+        }
         viewModel.start()
     }
 }
