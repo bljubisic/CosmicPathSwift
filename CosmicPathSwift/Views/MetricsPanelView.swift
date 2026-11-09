@@ -80,14 +80,15 @@ struct MetricsPanelView: View {
         return HStack(spacing: 0) {
             // Orbits completed (Visual) or elapsed time with the orbit count (Realistic)
             metricItem(label: orbits.label, value: orbits.value, color: .white)
+            Spacer()
             // Gravitational time dilation: τ/t = √(1 - rₛ/r)
             metricItem(
-                label: "Time Dilation",
+                label: text.timeDilationLabel,
                 value: text.timeDilation(metrics),
                 color: metrics.timeDilationColor
             )
             Spacer()
-            // Accumulated perihelion precession angle (degrees, or ″ in Realistic)
+            // Accumulated perihelion precession angle (degrees, or ″ / ′ in Realistic)
             metricItem(
                 label: text.precessionLabel(metrics),
                 value: text.precession(metrics),

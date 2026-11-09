@@ -128,19 +128,14 @@ struct DiagnosticsSection: View {
         ) {
             if let comparison = viewModel.precessionComparison {
                 HStack {
-                    valueColumn("Measured", Self.arcminutes(degrees: comparison.measuredPerOrbit))
-                    valueColumn("Predicted", Self.arcminutes(degrees: comparison.predictedPerOrbit))
+                    valueColumn("Measured", RealUnitsFormatter.arcminutes(degrees: comparison.measuredPerOrbit))
+                    valueColumn("Predicted", RealUnitsFormatter.arcminutes(degrees: comparison.predictedPerOrbit))
                     valueColumn("Ratio", String(format: "×%.3f", comparison.ratio))
                 }
             } else {
                 Text("— (after the first full orbit, 16 years)").foregroundStyle(.secondary)
             }
         }
-    }
-
-    /// An angle in arcminutes, e.g. "12.2′".
-    static func arcminutes(degrees: Double) -> String {
-        String(format: "%.1f\u{2032}", degrees * 60)
     }
 
     /// Realistic: arcseconds per orbit and per century, measured next to GR's prediction.
