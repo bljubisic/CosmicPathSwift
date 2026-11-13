@@ -59,13 +59,6 @@ struct ContentView: View {
         .sheet(isPresented: $isShowingInfo) {
             InfoSheetView(viewModel: viewModel)
         }
-        #if DEBUG
-        // App Store screenshots: `-screenshotScene <name>` sets up a scene once the canvas has a size.
-        .onChange(of: canvasSize) { oldSize, newSize in
-            guard oldSize == .zero, newSize != .zero, let scene = ScreenshotScene.fromLaunchArguments else { return }
-            scene.apply(to: viewModel, canvasSize: newSize)
-            // `-openInfo YES` also opens the info sheet, for screenshots of it.
-            if UserDefaults.standard.bool(forKey: "openInfo") { isShowingInfo = true }
         // Deep links (`cosmicpath://scenario/<group>/<name>`, issue #33). Unknown links
         // just open the app. Until the canvas has a size, the scenario waits.
         .onOpenURL { url in
@@ -83,7 +76,11 @@ struct ContentView: View {
             pendingScenario = nil
             viewModel.run(config, canvasSize: newSize)
             #if DEBUG
-            if !isFromLink { freezeScreenshotScene() }
+            if !isFromLink {
+                freezeScreenshotScene()
+                // `-openInfo YES` also opens the info sheet, for screenshots of it.
+                if UserDefaults.standard.bool(forKey: "openInfo") { isShowingInfo = true }
+            }
             #endif
         }
     }
