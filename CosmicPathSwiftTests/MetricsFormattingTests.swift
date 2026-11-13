@@ -131,3 +131,22 @@ struct TimeDilationFormattingTests {
         #expect(text.timeDilationLabel == "Time Dilation")
     }
 }
+
+// MARK: - Orbit count (issue #33)
+
+struct OrbitCountFormattingTests {
+
+    private let text = MetricsText(config: Metrics28.planetaryConfig)
+
+    /// Realistic used to label a single orbit "1 orbits".
+    @Test func singularAndPlural() {
+        #expect(text.orbits(Metrics28.metrics(precessionDegrees: 0, orbits: 1)).label == "1 orbit")
+        #expect(text.orbits(Metrics28.metrics(precessionDegrees: 0, orbits: 2)).label == "2 orbits")
+        #expect(text.orbits(Metrics28.metrics(precessionDegrees: 0, orbits: 0)).label == "0 orbits")
+    }
+
+    @Test func visualKeepsOrbitsLabel() {
+        let visual = MetricsText(config: SimulationConfig())
+        #expect(visual.orbits(Metrics28.metrics(precessionDegrees: 0, orbits: 1)).label == "Orbits")
+    }
+}

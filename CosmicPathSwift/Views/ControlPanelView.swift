@@ -168,7 +168,13 @@ struct ControlPanelView: View {
     }
 
     private var blackHoleToggle: some View {
-        Toggle(isOn: $viewModel.config.isBlackHoleMode) {
+        // The side effects run from the binding (user taps only), not from an
+        // onChange on the config, so deep links and screenshot scenes that turn
+        // Black Hole Mode on keep their own distances (#33).
+        Toggle(isOn: Binding(
+            get: { viewModel.config.isBlackHoleMode },
+            set: { viewModel.setBlackHoleMode($0, canvasSize: canvasSize) }
+        )) {
             HStack(spacing: 6) {
                 Image(systemName: "circle.fill")
                     .foregroundStyle(viewModel.config.isBlackHoleMode ? .red : .gray)
@@ -182,23 +188,6 @@ struct ControlPanelView: View {
         .tint(.red)
         .disabled(viewModel.isRunning)
         .opacity(viewModel.isRunning ? 0.5 : 1.0)
-        .onChange(of: viewModel.config.isBlackHoleMode) { _, isBlackHole in
-            if isBlackHole && viewModel.config.isRealistic {
-                viewModel.config.resetStrongFieldParameters()
-            }
-            if isBlackHole {
-                viewModel.config.mass1Multiplier = 1.0
-                viewModel.config.separationAU = 1.3
-            } else {
-                viewModel.config.mass1Multiplier = 1.0
-                viewModel.config.separationAU = 1.0
-            }
-            // Always reset inclination when switching mode so the user
-            // starts from a flat orbit and can appreciate BH effects before
-            // adding 3D complexity.
-            viewModel.config.inclinationDeg = 0.0
-            viewModel.applyConfigChange(canvasSize: canvasSize)
-        }
     }
 
     /// Mass and distance use a log scale; inclination is linear. In strong

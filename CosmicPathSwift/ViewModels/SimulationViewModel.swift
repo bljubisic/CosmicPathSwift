@@ -276,6 +276,8 @@ class SimulationViewModel {
     private var simulationTask: Task<Void, Never>?
     private var transformer = CoordinateTransformer(canvasSize: .zero)
     private var currentCanvasSize: CGSize = .zero
+    /// Zoom-out factor on top of the auto-zoom (see `setViewportScale(_:)`).
+    private var viewportScale: Double = 1
 
     /// Turns the speed and accuracy multipliers into whole steps per frame.
     private var stepPlanner = FrameStepPlanner()
@@ -375,6 +377,15 @@ class SimulationViewModel {
         simulationTask = nil
     }
 
+    #if DEBUG
+    /// App Store screenshots: stops the simulation loop but keeps the running
+    /// layout (`isRunning` stays true), so a capture taken later shows this frame.
+    func freezeForScreenshot() {
+        simulationTask?.cancel()
+        simulationTask = nil
+    }
+    #endif
+
     /// Stops the simulation and restores defaults. The selected mode and 3-body
     /// preset are kept so Reset restarts the scenario the user is looking at,
     /// and the Advanced settings are kept so experienced users don't have to
@@ -407,6 +418,15 @@ class SimulationViewModel {
         syncState()
     }
 
+    /// Zooms out (> 1) or in (< 1) on top of the auto-zoom and re-projects. App Store
+    /// artwork uses it to fit a scene into the art safe area; the app leaves it at 1.
+    func setViewportScale(_ scale: Double) {
+        guard scale > 0 else { return }
+        viewportScale = scale
+        transformer = makeTransformer()
+        syncState()
+    }
+
     /// Reinitialises the simulation with current config without changing run state.
     func applyConfigChange(canvasSize: CGSize) {
         setup(canvasSize: canvasSize)
@@ -434,6 +454,24 @@ class SimulationViewModel {
     func selectScale(_ scale: PhysicsScale) {
         guard scale != config.advanced.scale else { return }
         config.advanced.scale = scale
+    }
+
+    /// Black Hole Mode switch (user action). Turning it on or off restores that
+    /// mode's slider defaults and a flat orbit, then restarts the setup.
+    func setBlackHoleMode(_ isOn: Bool, canvasSize: CGSize) {
+        guard isOn != config.isBlackHoleMode else { return }
+        var updated = config
+        updated.isBlackHoleMode = isOn
+        if isOn && updated.isRealistic {
+            updated.resetStrongFieldParameters()
+        }
+        updated.mass1Multiplier = 1.0
+        updated.separationAU = isOn ? 1.3 : 1.0
+        // Reset inclination when switching mode so the user starts from a flat
+        // orbit and can appreciate BH effects before adding 3D complexity.
+        updated.inclinationDeg = 0.0
+        config = updated
+        applyConfigChange(canvasSize: canvasSize)
     }
 
     /// "1 s = X" rate the Realistic scale runs at: the strong-field rate in
@@ -537,7 +575,7 @@ class SimulationViewModel {
     private func makeTransformer() -> CoordinateTransformer {
         CoordinateTransformer(
             canvasSize: currentCanvasSize,
-            simulationSeparation: zoom.maxExtent,
+            simulationSeparation: zoom.maxExtent * viewportScale,
             azimuth: cameraAzimuth,
             elevation: cameraElevation,
             centerOffset: zoom.centerOfMass
