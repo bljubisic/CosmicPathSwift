@@ -57,6 +57,9 @@ struct SimulationCanvasView: View {
     /// canvas fills the screen: `ContentView` then shows it above the metrics,
     /// where the floating controls can't cover it (issue #26).
     var showsEventBanner = true
+    /// Whether the canvas draws any overlay text (formulas, badges, event banner).
+    /// False for App Store artwork, which shows the simulation only.
+    var showsOverlays = true
 
     /// Tracks the cumulative drag translation from the previous gesture event so
     /// we can compute per-event deltas. Reset to `.zero` in `.onEnded` so each
@@ -152,23 +155,9 @@ struct SimulationCanvasView: View {
 
                 vectorArrows
 
-                // Overlays: inset by `overlayInsets`; the drawing above is not.
-                Group {
-                    if showsFormulas {
-                        formulaOverlay
-                    }
-
-                    if isThreeBody {
-                        ChaosTwinBadge(viewModel: viewModel)
-                    } else {
-                        HabitableZoneBadge(viewModel: viewModel)
-                    }
-
-                    if showsEventBanner {
-                        eventOverlay
-                    }
+                if showsOverlays {
+                    overlays
                 }
-                .padding(overlayInsets)
             }
             .onAppear {
                 canvasSize = geometry.size
@@ -481,6 +470,29 @@ struct SimulationCanvasView: View {
         }
     }
 
+
+    // MARK: - Overlays
+
+    /// Formula text, badges and the event banner, inset by `overlayInsets`
+    /// (the drawing itself is not inset).
+    private var overlays: some View {
+        Group {
+            if showsFormulas {
+                formulaOverlay
+            }
+
+            if isThreeBody {
+                ChaosTwinBadge(viewModel: viewModel)
+            } else {
+                HabitableZoneBadge(viewModel: viewModel)
+            }
+
+            if showsEventBanner {
+                eventOverlay
+            }
+        }
+        .padding(overlayInsets)
+    }
 
     // MARK: - Formula Overlay
 

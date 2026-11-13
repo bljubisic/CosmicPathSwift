@@ -100,3 +100,8 @@ iOSInjectionProject/
 
 # End of https://www.toptal.com/developers/gitignore/api/xcode,swift
 buildServer.json
+
+# App Store screenshot kit (issue #33): generated output
+AppStore/screenshots/
+AppStore/.build/
+AppStore/artwork/

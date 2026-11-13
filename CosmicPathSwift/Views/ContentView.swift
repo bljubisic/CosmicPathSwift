@@ -29,6 +29,8 @@ struct ContentView: View {
     @State private var isShowingAdvanced = false
     /// Opt-in that reveals the Advanced button (toggled in `ControlPanelView`).
     @AppStorage(AdvancedSettings.optInStorageKey) private var isAdvancedEnabled = false
+    /// Scenario from a deep link that arrived before the canvas had a size (cold launch).
+    @State private var pendingScenario: SimulationConfig?
 
     var body: some View {
         GeometryReader { geometry in
@@ -52,14 +54,51 @@ struct ContentView: View {
         .sheet(isPresented: $isShowingAdvanced) {
             AdvancedControlsView(viewModel: viewModel)
         }
-        #if DEBUG
-        // App Store screenshots: `-screenshotScene <name>` sets up a scene once the canvas has a size.
-        .onChange(of: canvasSize) { oldSize, newSize in
-            guard oldSize == .zero, newSize != .zero, let scene = ScreenshotScene.fromLaunchArguments else { return }
-            scene.apply(to: viewModel, canvasSize: newSize)
+        // Deep links (`cosmicpath://scenario/<group>/<name>`, issue #33). Unknown links
+        // just open the app. Until the canvas has a size, the scenario waits.
+        .onOpenURL { url in
+            guard let scenario = AppScenario(url: url) else { return }
+            if canvasSize == .zero {
+                pendingScenario = scenario.config
+            } else {
+                viewModel.open(scenario, canvasSize: canvasSize)
+            }
         }
+        .onChange(of: canvasSize) { oldSize, newSize in
+            guard oldSize == .zero, newSize != .zero,
+                  let config = pendingScenario ?? launchScenario else { return }
+            let isFromLink = pendingScenario != nil
+            pendingScenario = nil
+            viewModel.run(config, canvasSize: newSize)
+            #if DEBUG
+            if !isFromLink { freezeScreenshotScene() }
+            #endif
+        }
+    }
+
+    /// Debug only: the App Store screenshot scene named by `-screenshotScene <name>`.
+    private var launchScenario: SimulationConfig? {
+        #if DEBUG
+        ScreenshotScene.fromLaunchArguments?.config
+        #else
+        nil
         #endif
     }
+
+    #if DEBUG
+    /// Freezes the launch-argument screenshot scene at its capture moment and,
+    /// with `-artworkExport YES`, renders the App Store header and search images.
+    private func freezeScreenshotScene() {
+        guard let scene = ScreenshotScene.fromLaunchArguments,
+              !ScreenshotScene.isRecordingFromLaunchArguments else { return }
+        Task {
+            await scene.freeze(viewModel)
+            if ArtworkExport.isRequested {
+                ArtworkExport.export(viewModel, name: scene.rawValue, canvasSize: canvasSize)
+            }
+        }
+    }
+    #endif
 
     // MARK: - Portrait Layout
 

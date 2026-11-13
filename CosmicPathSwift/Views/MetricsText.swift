@@ -91,7 +91,8 @@ struct MetricsText {
     func orbits(_ metrics: RelativisticMetrics) -> (label: String, value: String) {
         let count = String(format: "%d", metrics.orbitsCompleted)
         guard isRealistic else { return ("Orbits", count) }
-        return ("\(count) orbits", RealUnitsFormatter.duration(metrics.elapsedTime, units: units))
+        let noun = metrics.orbitsCompleted == 1 ? "orbit" : "orbits"
+        return ("\(count) \(noun)", RealUnitsFormatter.duration(metrics.elapsedTime, units: units))
     }
 
     // MARK: - 3-Body
