@@ -190,7 +190,15 @@ final class GravitySimulationEngine: SimulationEngineProtocol {
     /// When true, enables black hole rendering and event horizon absorption.
     /// When false, body1 is never classified as a black hole regardless of mass.
     /// Only affects the 2-body scenario.
-    var isBlackHoleMode: Bool = false
+    ///
+    /// The view model sets this right after creating the engine, so the metrics
+    /// are refreshed here: otherwise `metrics.isBlackHole` (and the horizon rings
+    /// and rₛ readout that depend on it) would stay false until the first step.
+    var isBlackHoleMode: Bool = false {
+        didSet {
+            if isTwoBodyScenario && isBlackHoleMode != oldValue { updateMetrics() }
+        }
+    }
 
     /// True when the engine was created with exactly two bodies. Enables the
     /// star–planet features: absorption, tidal stripping, precession, proper time.

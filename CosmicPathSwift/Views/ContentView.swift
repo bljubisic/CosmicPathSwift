@@ -27,6 +27,8 @@ struct ContentView: View {
     @State private var canvasSize: CGSize = .zero
     /// Whether the Advanced sheet is open.
     @State private var isShowingAdvanced = false
+    /// Whether the "What am I looking at?" sheet is open (issue #34).
+    @State private var isShowingInfo = false
     /// Opt-in that reveals the Advanced button (toggled in `ControlPanelView`).
     @AppStorage(AdvancedSettings.optInStorageKey) private var isAdvancedEnabled = false
     /// Scenario from a deep link that arrived before the canvas had a size (cold launch).
@@ -54,6 +56,16 @@ struct ContentView: View {
         .sheet(isPresented: $isShowingAdvanced) {
             AdvancedControlsView(viewModel: viewModel)
         }
+        .sheet(isPresented: $isShowingInfo) {
+            InfoSheetView(viewModel: viewModel)
+        }
+        #if DEBUG
+        // App Store screenshots: `-screenshotScene <name>` sets up a scene once the canvas has a size.
+        .onChange(of: canvasSize) { oldSize, newSize in
+            guard oldSize == .zero, newSize != .zero, let scene = ScreenshotScene.fromLaunchArguments else { return }
+            scene.apply(to: viewModel, canvasSize: newSize)
+            // `-openInfo YES` also opens the info sheet, for screenshots of it.
+            if UserDefaults.standard.bool(forKey: "openInfo") { isShowingInfo = true }
         // Deep links (`cosmicpath://scenario/<group>/<name>`, issue #33). Unknown links
         // just open the app. Until the canvas has a size, the scenario waits.
         .onOpenURL { url in
@@ -141,6 +153,7 @@ struct ContentView: View {
                     HStack(spacing: 16) {
                         pauseButton
                         recordButton
+                        floatingInfoButton
                         floatingAdvancedButton
                     }
                     .padding(.bottom, 16)
@@ -160,7 +173,8 @@ struct ContentView: View {
                         .padding(.top, 6)
 
                     ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: true,
-                                     onShowAdvanced: { isShowingAdvanced = true })
+                                     onShowAdvanced: { isShowingAdvanced = true },
+                                     onShowInfo: { isShowingInfo = true })
                         .padding(.horizontal)
                         .padding(.vertical, 10)
                 }
@@ -199,6 +213,7 @@ struct ContentView: View {
                     HStack(spacing: 16) {
                         pauseButton
                         recordButton
+                        floatingInfoButton
                         floatingAdvancedButton
                     }
                     .padding(.bottom, 8)
@@ -218,7 +233,8 @@ struct ContentView: View {
                         .padding(.top, 6)
 
                         ControlPanelView(viewModel: viewModel, canvasSize: canvasSize, showParameterControls: false,
-                                         onShowAdvanced: { isShowingAdvanced = true })
+                                         onShowAdvanced: { isShowingAdvanced = true },
+                                         onShowInfo: { isShowingInfo = true })
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
                     }
@@ -249,6 +265,21 @@ struct ContentView: View {
                 .symbolEffect(.pulse, isActive: viewModel.recorder.isRecording)
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Info Button
+
+    /// Floating "What am I looking at?" button next to Pause/Record while running (issue #34).
+    private var floatingInfoButton: some View {
+        Button {
+            isShowingInfo = true
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.title2)
+                .foregroundStyle(.teal)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("What am I looking at?")
     }
 
     // MARK: - Advanced Button

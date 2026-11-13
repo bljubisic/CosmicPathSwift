@@ -480,6 +480,22 @@ class SimulationViewModel {
         config.advanced.time.activeRate(for: config.rateRegime)
     }
 
+    /// Everything the "What am I looking at?" sheet explains (issue #34).
+    var infoSnapshot: InfoSnapshot {
+        InfoSnapshot(
+            config: config,
+            metrics: metrics,
+            systemMetrics: systemMetrics,
+            bodyLabels: bodyLabels,
+            coordinateScale: coordinateScale,
+            habitableZone: habitableZone,
+            habitableStatus: habitableStatus,
+            planetEquilibriumTemperature: planetEquilibriumTemperature,
+            isHabitableZoneOffScreen: isHabitableZoneOffScreen,
+            activeRealTimeRate: activeRealTimeRate
+        )
+    }
+
     /// Shows or hides the habitable zone. Only affects rendering, so it works
     /// while the simulation is running and doesn't restart it.
     func setHabitableZoneVisible(_ visible: Bool) {

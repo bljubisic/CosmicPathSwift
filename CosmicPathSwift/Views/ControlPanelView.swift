@@ -46,6 +46,8 @@ struct ControlPanelView: View {
     var showParameterControls: Bool = true
     /// Opens the Advanced sheet (owned by `ContentView`).
     var onShowAdvanced: () -> Void = {}
+    /// Opens the "What am I looking at?" sheet (owned by `ContentView`).
+    var onShowInfo: () -> Void = {}
 
     /// Opt-in that reveals the Advanced button. Persisted across launches.
     @AppStorage(AdvancedSettings.optInStorageKey) private var isAdvancedEnabled = false
@@ -88,6 +90,15 @@ struct ControlPanelView: View {
                 .buttonStyle(.bordered)
                 .tint(.blue)
                 .help("Reset Camera")
+
+                // "What am I looking at?" (issue #34): available to everyone.
+                Button(action: onShowInfo) {
+                    Image(systemName: "info.circle")
+                }
+                .buttonStyle(.bordered)
+                .tint(.teal)
+                .help("What am I looking at?")
+                .accessibilityLabel("What am I looking at?")
 
                 if isAdvancedEnabled {
                     Button(action: onShowAdvanced) {
