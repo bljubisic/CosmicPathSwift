@@ -14,6 +14,8 @@ struct SimulationViewport: View {
     var overlayInsets = EdgeInsets()
     var showsFormulas = true
     var showsEventBanner = true
+    /// Floating controls over the canvas (from its bottom edge), so the sheet can centre above them.
+    var contentInsets = EdgeInsets()
 
     /// Share of Split's height (portrait) the orbit view takes; the sheet gets the rest.
     private static let splitOrbitFraction: CGFloat = 0.4
@@ -25,7 +27,8 @@ struct SimulationViewport: View {
                                  showsFormulas: showsFormulas, showsEventBanner: showsEventBanner)
         case .threeD:
             GravityWellView(viewModel: viewModel, canvasSize: $canvasSize, overlayInsets: overlayInsets,
-                            showsFormulas: showsFormulas, showsEventBanner: showsEventBanner)
+                            showsFormulas: showsFormulas, showsEventBanner: showsEventBanner,
+                            contentInsets: contentInsets)
         case .split:
             split
         }
@@ -50,7 +53,8 @@ struct SimulationViewport: View {
                         height: isLandscape ? nil : geometry.size.height * Self.splitOrbitFraction
                     )
                 GravityWellView(viewModel: viewModel, canvasSize: $canvasSize,
-                                drivesSimulation: false, showsOverlays: false)
+                                drivesSimulation: false, showsOverlays: false,
+                                contentInsets: EdgeInsets(top: 0, leading: 0, bottom: contentInsets.bottom, trailing: 0))
                     .overlay(alignment: isLandscape ? .leading : .top) {
                         Rectangle().fill(.white.opacity(0.15))
                             .frame(width: isLandscape ? 1 : nil, height: isLandscape ? nil : 1)

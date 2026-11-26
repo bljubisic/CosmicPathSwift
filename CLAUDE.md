@@ -34,7 +34,9 @@ SimulationEngineProtocol  ←  GravitySimulationEngine (production)
 SimulationViewModel  (@Observable)
         |
 ContentView  (GeometryReader → portrait or landscape layout)
-   ├── SimulationCanvasView   (Canvas rendering)
+   ├── SimulationViewport     (2D / Split / 3D, issue #38)
+   │     ├── SimulationCanvasView   (Canvas rendering)
+   │     └── GravityWellView        (gravity-well sheet)
    ├── MetricsPanelView       (read-only metrics display)
    └── ControlPanelView       (buttons + sliders; sliders hidden in landscape)
 ```
@@ -59,3 +61,5 @@ ContentView  (GeometryReader → portrait or landscape layout)
 **Orientation layout** — `ContentView` uses `GeometryReader` to detect landscape (`width > height`) and switches layouts. Landscape hides mass/distance sliders and the black hole toggle (`showParameterControls: false` on `ControlPanelView`).
 
 **Canvas rendering** — `SimulationCanvasView` uses SwiftUI `Canvas` (not `UIKit`) for the spacetime grid and orbital trails. The grid warp is purely visual (`Utilities/SpacetimeGridWarp.swift`): Visual, planetary Realistic and 3-body pull grid vertices a fixed number of points toward the bodies (`.pull`); strong-field scenarios use `SchwarzschildGridWarp` (Flamm's paraboloid slope, r' = r(1 − √(rₛ/r))^s from rₛ on screen), so the Probe shows a deep funnel and S2 only a faint dimple.
+
+**Gravity-well view** (issue #38) — `config.advanced.display.viewMode` (`CanvasViewMode`: 2D / Split / 3D) is render-only: `ViewModeButton` (control row and floating row) or the Advanced → Display picker switches it via `syncState()` without restarting, and `run(_:)` keeps it when a scenario opens. While it isn't 2D, `syncState()` builds `viewModel.gravityWellScene` (`Models/GravityWellScene.swift`): bodies and trails centred on the CoM and flattened onto the orbital plane (z dropped), rings (rₛ, photon sphere, ISCO, habitable zone, Roche limit), and a `GravityWellSurface` (`Physics/GravityWellSurface.swift`) giving the sheet's depth. The depth is illustrative: Newtonian wells weighted by log(mass) (floor `minimumWeight`) with a tanh soft cap, widths and depths as fractions of the view extent (Visual Black Hole Mode's hole gets `minimumWidth` 2 rₛ so its disc doesn't hide the funnel); strong field uses Flamm's paraboloid out to a rim. `GravityWellMesh` (`Utilities/`) projects the scene through an ordinary `CoordinateTransformer` with the depth on the z axis (positive = down on screen); `GravityWellView` draws it in one `Canvas` and centres `mesh.verticalBounds` above the floating controls (`contentInsets`, measured in `ContentView`). The sheet shares `cameraAzimuth` but has its own elevation and pinch zoom in `viewModel.wellCamera` (`WellCameraState`, 20°–80°, default 60°; presets and Reset reset it). Split stacks the orbit view (40%) over the sheet in portrait and puts them side by side when the canvas is wider than tall; the orbit view drives the simulation there. Body and trail looks are shared through `BodyAppearance` / `TrailRenderer`, the on-canvas text through `CanvasOverlaysView`, and setup/resize through `simulationCanvasLifecycle`. In Debug, `-viewMode split|threeD` opens it (works with `-screenshotScene`). `SimulationViewModel.swift` is at the 800-line limit, so put new view-model code in extensions.

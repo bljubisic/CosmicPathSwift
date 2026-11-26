@@ -23,6 +23,8 @@ struct GravityWellView: View {
     var showsFormulas = true
     var showsEventBanner = true
     var showsOverlays = true
+    /// Parts of the panel covered by floating controls; the sheet centres in the rest.
+    var contentInsets = EdgeInsets()
 
     @State private var previousDragTranslation: CGSize = .zero
     /// Zoom when the current pinch began; nil between pinches.
@@ -45,7 +47,7 @@ struct GravityWellView: View {
                         sheet(mesh: mesh, scene: scene)
                         bodies(mesh: mesh, scene: scene, transformer: transformer, size: geometry.size)
                     }
-                    .offset(y: verticalShift(scene: scene, transformer: transformer))
+                    .offset(y: verticalShift(mesh: mesh, size: geometry.size))
                 }
 
                 if showsOverlays {
@@ -78,12 +80,20 @@ struct GravityWellView: View {
         )
     }
 
-    /// Moves the drawing up by half the deepest well's on-screen drop, so the
-    /// sheet and its wells sit centred rather than the flat sheet alone.
-    private func verticalShift(scene: GravityWellScene, transformer: CoordinateTransformer) -> CGFloat {
-        let deepest = scene.bodies.map { scene.surface.depth(x: $0.position.x, y: $0.position.y) }.max() ?? 0
-        return -CGFloat(0.5 * sin(transformer.elevation) * deepest * transformer.scale)
+    /// Moves the drawing so the sheet and its wells sit centred in the part of
+    /// the panel the floating controls leave free (the wells hang below the plane
+    /// the camera is centred on). If the controls leave too little room, the
+    /// whole panel is used.
+    private func verticalShift(mesh: GravityWellMesh, size: CGSize) -> CGFloat {
+        guard let bounds = mesh.verticalBounds else { return 0 }
+        let free = size.height - contentInsets.top - contentInsets.bottom
+        let usesInsets = free >= size.height * Self.minimumFreeFraction
+        let center = usesInsets ? contentInsets.top + free / 2 : size.height / 2
+        return center - (bounds.lowerBound + bounds.upperBound) / 2
     }
+
+    /// Below this share of the panel left free, the insets are ignored.
+    private static let minimumFreeFraction: CGFloat = 0.4
 
     private var rotateGesture: some Gesture {
         DragGesture(minimumDistance: 2)

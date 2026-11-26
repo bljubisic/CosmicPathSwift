@@ -347,7 +347,12 @@ extension InfoContent {
         var display: InfoSection {
             var section = InfoSection(id: .display, title: "On the Screen")
             let display = config.advanced.display
-            if display.showSpacetimeGrid {
+            // 3D shows only the sheet: no flat grid, CoM marker or band.
+            let showsOrbitView = display.viewMode != .threeD
+            if display.viewMode.showsWells {
+                section.terms += wellTerms
+            }
+            if display.showSpacetimeGrid && showsOrbitView {
                 section.terms.append(InfoTerm(
                     term: "Grid",
                     definition: config.isStrongField
@@ -357,7 +362,7 @@ extension InfoContent {
                 ))
             }
             section.terms.append(InfoTerm(term: "Trails", definition: "The recent path of each body."))
-            if display.showCenterOfMass {
+            if display.showCenterOfMass && showsOrbitView {
                 section.terms.append(InfoTerm(
                     term: "CoM",
                     definition: "The centre of mass: the point every body really orbits. The view stays centred on it."
@@ -367,7 +372,9 @@ extension InfoContent {
                 section.terms.append(InfoTerm(term: "Red rings", definition: ringsDefinition))
             }
             if snapshot.habitableZone != nil && !isThreeBody {
-                section.terms.append(InfoTerm(term: "Green band", definition: "The habitable zone (see above)."))
+                section.terms.append(showsOrbitView
+                    ? InfoTerm(term: "Green band", definition: "The habitable zone (see above).")
+                    : InfoTerm(term: "Green rings", definition: "The habitable zone's edges (see above), drawn on the sheet."))
             }
             if isThreeBody && config.advanced.initial.isTwinActive {
                 section.terms.append(InfoTerm(
@@ -380,6 +387,27 @@ extension InfoContent {
             }
             section.terms.append(InfoTerm(term: "Formulas", definition: "The equations behind the motion, top left."))
             return section
+        }
+
+        /// The gravity-well sheet (issue #38): what it shows and what it leaves out.
+        private var wellTerms: [InfoTerm] {
+            let shape = config.isStrongField
+                ? "Around a Realistic black hole it is Flamm's paraboloid, the shape of space near the hole: "
+                    + "a deep funnel down to the horizon, almost flat far away."
+                : "Heavier bodies dig deeper wells, but depth grows with the log of the mass, so light bodies "
+                    + "stay visible next to heavy ones. The rings around each well are in its body's colour."
+            return [
+                InfoTerm(
+                    term: "Wells",
+                    definition: "Spacetime drawn as a rubber sheet pulled down under each body. " + shape
+                        + " An illustration of gravity's pull, not real spacetime; the physics doesn't use it."
+                ),
+                InfoTerm(
+                    term: "Flattened orbits",
+                    definition: "On the sheet, bodies and trails are drawn in the orbital plane and any tilt is "
+                        + "dropped, because the sheet uses up and down for depth."
+                )
+            ]
         }
 
         private var ringsDefinition: String {

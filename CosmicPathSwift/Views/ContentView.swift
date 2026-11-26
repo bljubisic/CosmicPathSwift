@@ -33,6 +33,9 @@ struct ContentView: View {
     @AppStorage(AdvancedSettings.optInStorageKey) private var isAdvancedEnabled = false
     /// Scenario from a deep link that arrived before the canvas had a size (cold launch).
     @State private var pendingScenario: SimulationConfig?
+    /// Height of the controls floating over the bottom of a full-screen canvas,
+    /// so the gravity-well sheet can centre above them (issue #38).
+    @State private var bottomOverlayHeight: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -132,7 +135,8 @@ struct ContentView: View {
             if viewModel.isRunning {
                 // Running: full-screen canvas with floating pause button and metrics
                 SimulationViewport(viewModel: viewModel, canvasSize: $canvasSize,
-                                   overlayInsets: safeArea, showsFormulas: false, showsEventBanner: false)
+                                   overlayInsets: safeArea, showsFormulas: false, showsEventBanner: false,
+                                   contentInsets: bottomInsets(safeArea: safeArea))
                     .ignoresSafeArea()
 
                 VStack {
@@ -148,21 +152,24 @@ struct ContentView: View {
 
                     Spacer()
 
-                    EventBannerView(viewModel: viewModel)
-                        .padding(.bottom, 8)
+                    VStack {
+                        EventBannerView(viewModel: viewModel)
+                            .padding(.bottom, 8)
 
-                    MetricsPanelView(viewModel: viewModel)
-                        .padding(.horizontal)
-                        .padding(.bottom, 4)
+                        MetricsPanelView(viewModel: viewModel)
+                            .padding(.horizontal)
+                            .padding(.bottom, 4)
 
-                    HStack(spacing: 16) {
-                        pauseButton
-                        recordButton
-                        ViewModeButton(viewModel: viewModel, style: .floating)
-                        floatingInfoButton
-                        floatingAdvancedButton
+                        HStack(spacing: 16) {
+                            pauseButton
+                            recordButton
+                            ViewModeButton(viewModel: viewModel, style: .floating)
+                            floatingInfoButton
+                            floatingAdvancedButton
+                        }
+                        .padding(.bottom, 16)
                     }
-                    .padding(.bottom, 16)
+                    .modifier(MeasuresHeight(height: $bottomOverlayHeight))
                 }
             } else {
                 // Paused/stopped: full controls visible
@@ -201,29 +208,33 @@ struct ContentView: View {
     private func landscapeLayout(safeArea: EdgeInsets) -> some View {
         ZStack(alignment: .bottom) {
             SimulationViewport(viewModel: viewModel, canvasSize: $canvasSize,
-                               overlayInsets: safeArea, showsEventBanner: false)
+                               overlayInsets: safeArea, showsEventBanner: false,
+                               contentInsets: bottomInsets(safeArea: safeArea))
                 .ignoresSafeArea()
 
             if viewModel.isRunning {
                 // Running: floating pause button and metrics overlay
                 VStack {
                     Spacer()
-                    EventBannerView(viewModel: viewModel)
-                    HStack {
-                        massLegend
-                        Spacer()
-                        MetricsPanelView(viewModel: viewModel)
-                    }
-                    .padding(.horizontal)
+                    VStack {
+                        EventBannerView(viewModel: viewModel)
+                        HStack {
+                            massLegend
+                            Spacer()
+                            MetricsPanelView(viewModel: viewModel)
+                        }
+                        .padding(.horizontal)
 
-                    HStack(spacing: 16) {
-                        pauseButton
-                        recordButton
-                        ViewModeButton(viewModel: viewModel, style: .floating)
-                        floatingInfoButton
-                        floatingAdvancedButton
+                        HStack(spacing: 16) {
+                            pauseButton
+                            recordButton
+                            ViewModeButton(viewModel: viewModel, style: .floating)
+                            floatingInfoButton
+                            floatingAdvancedButton
+                        }
+                        .padding(.bottom, 8)
                     }
-                    .padding(.bottom, 8)
+                    .modifier(MeasuresHeight(height: $bottomOverlayHeight))
                 }
             } else {
                 // Paused/stopped: bottom overlay with metrics and controls, event banner above it
@@ -247,6 +258,7 @@ struct ContentView: View {
                     }
                     .background(Color.black.opacity(0.5))
                 }
+                .modifier(MeasuresHeight(height: $bottomOverlayHeight))
             }
         }
         .ignoresSafeArea()
@@ -416,4 +428,22 @@ private struct VideoShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Overlay measurement
+
+extension ContentView {
+    /// The bottom controls plus the home-indicator inset, from the full-screen canvas's bottom edge.
+    fileprivate func bottomInsets(safeArea: EdgeInsets) -> EdgeInsets {
+        EdgeInsets(top: 0, leading: 0, bottom: bottomOverlayHeight + safeArea.bottom, trailing: 0)
+    }
+}
+
+/// Reports a view's height into `height` whenever it changes.
+private struct MeasuresHeight: ViewModifier {
+    @Binding var height: CGFloat
+
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+    }
 }

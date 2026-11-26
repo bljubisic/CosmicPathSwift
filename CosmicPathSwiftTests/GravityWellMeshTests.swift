@@ -68,6 +68,15 @@ struct GravityWellMeshTests {
         #expect(mesh.contours.allSatisfy { $0.points.count == GravityWellMesh.contourSamples + 1 })
     }
 
+    /// The span the view centres: every grid point and every well bottom.
+    @Test func verticalBoundsCoverTheGridAndTheWells() throws {
+        let mesh = GravityWellMesh.make(scene: scene(), transformer: transformer())
+        let bounds = try #require(mesh.verticalBounds)
+        let ys = mesh.gridLines.flatMap { $0.map(\.y) } + mesh.bodyPoints.map(\.y)
+        #expect(bounds.lowerBound == ys.min())
+        #expect(bounds.upperBound == ys.max())
+    }
+
     @Test func renderOrderCoversEveryBody() {
         let mesh = GravityWellMesh.make(scene: scene(), transformer: transformer())
         #expect(mesh.renderOrder.sorted() == [0, 1])

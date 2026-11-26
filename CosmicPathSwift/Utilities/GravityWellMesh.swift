@@ -53,6 +53,14 @@ struct GravityWellMesh {
         return lines.reduce(0) { $0 + $1.count } + bodyPoints.count + (horizon?.count ?? 0)
     }
 
+    /// Top and bottom of the sheet on screen: every grid point and every well
+    /// bottom. The view centres this span. Nil when nothing is drawn.
+    var verticalBounds: ClosedRange<CGFloat>? {
+        let ys = gridLines.flatMap { $0.map(\.y) } + bodyPoints.map(\.y)
+        guard let top = ys.min(), let bottom = ys.max() else { return nil }
+        return top...bottom
+    }
+
     // MARK: Building
 
     static func make(
