@@ -20,6 +20,7 @@ extension SimulationViewModel {
         pause()
         cameraAzimuth = CameraPreset.tilted.azimuth
         cameraElevation = CameraPreset.tilted.elevation
+        wellCameraElevation = WellCamera.defaultElevation
         self.config = config
         applyConfigChange(canvasSize: canvasSize)
         start()

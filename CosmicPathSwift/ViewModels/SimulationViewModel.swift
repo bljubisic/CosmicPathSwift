@@ -261,6 +261,12 @@ class SimulationViewModel {
     /// Modified by vertical drag gestures in `SimulationCanvasView`.
     var cameraElevation: Double = .pi / 6
 
+    /// Gravity-well sheet's own elevation (#38); it shares `cameraAzimuth`.
+    var wellCameraElevation: Double = WellCamera.defaultElevation
+
+    /// What the gravity-well sheet is drawn from; nil in the 2D view.
+    var gravityWellScene: GravityWellScene?
+
     // MARK: - Dependencies
 
     /// True once `setup()` has been called at least once. Used by the canvas view
@@ -408,6 +414,7 @@ class SimulationViewModel {
         // always recognisable after reset.
         cameraAzimuth = CameraPreset.tilted.azimuth
         cameraElevation = CameraPreset.tilted.elevation
+        wellCameraElevation = WellCamera.defaultElevation
         setup(canvasSize: canvasSize)
     }
 
@@ -547,6 +554,7 @@ class SimulationViewModel {
     func applyCameraPreset(_ preset: CameraPreset) {
         cameraAzimuth = preset.azimuth
         cameraElevation = preset.elevation
+        wellCameraElevation = WellCamera.elevation(for: preset)
         transformer = makeTransformer()
         syncState()
     }
@@ -690,7 +698,18 @@ class SimulationViewModel {
         coordinateScale = transformer.scale
 
         updateHabitableZone(bodies)
+        updateGravityWellScene(bodies)
         recordDiagnostics(bodies)
+    }
+
+    /// Rebuilds the sheet's scene while a well view is shown (issue #38).
+    private func updateGravityWellScene(_ bodies: [CelestialBody]) {
+        let display = config.advanced.display
+        gravityWellScene = display.viewMode.showsWells ? GravityWellScene.make(
+            bodies: bodies, config: config, metrics: metrics,
+            centerOfMass: zoom.centerOfMass, viewExtent: zoom.maxExtent * viewportScale,
+            habitableZone: habitableZone, trailLimit: display.trailPointLimit
+        ) : nil
     }
 
     /// Offers this frame to the recorder; it ignores frames where time hasn't advanced.
