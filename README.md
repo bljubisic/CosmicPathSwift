@@ -41,6 +41,8 @@ a million and watch the copies diverge.
 ### Tools
 - **Habitable zone** overlay (conservative limits after Kasting et al. 1993, optimistic
   after Kopparapu et al. 2013).
+- **Gravity-well view** – switch between 2D, Split and 3D to see spacetime as a rubber sheet
+  pulled down into a well under each body, with the orbits riding on it.
 - **Info sheet** ("What am I looking at?") explaining every element on screen.
 - **Advanced settings** – integrator (Velocity-Verlet, RK4, Yoshida 4), softening, collision
   mode, accuracy/speed, initial eccentricity, camera presets (top, tilted, edge-on),
@@ -114,7 +116,9 @@ SimulationEngineProtocol  ←  GravitySimulationEngine (production)
 SimulationViewModel  (@Observable)
         |
 ContentView  (portrait / landscape layout)
-   ├── SimulationCanvasView   (SwiftUI Canvas: grid, trails, bodies)
+   ├── SimulationViewport     (2D / Split / 3D)
+   │     ├── SimulationCanvasView   (SwiftUI Canvas: grid, trails, bodies)
+   │     └── GravityWellView        (gravity-well sheet)
    ├── MetricsPanelView       (read-only metrics)
    └── ControlPanelView       (buttons and sliders)
 ```
@@ -125,7 +129,7 @@ ContentView  (portrait / landscape layout)
 | `CosmicPathSwift/Models` | Configuration and settings types, scenarios, info-sheet content |
 | `CosmicPathSwift/ViewModels` | `SimulationViewModel`, chaos twin, diagnostics recorder, zoom, screen recording |
 | `CosmicPathSwift/Views` | SwiftUI views and the Advanced settings sections |
-| `CosmicPathSwift/Utilities` | Coordinate transforms, grid warp, unit formatting, CSV export |
+| `CosmicPathSwift/Utilities` | Coordinate transforms, grid warp, gravity-well mesh, unit formatting, CSV export |
 | `CosmicPathSwiftTests` | Swift Testing unit tests |
 | `AppStore` | Screenshot/artwork capture script and App Store page texts |
 

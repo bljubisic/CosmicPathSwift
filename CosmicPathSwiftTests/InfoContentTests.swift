@@ -213,6 +213,46 @@ struct InfoDisplayTests {
         #expect(grid.definition.contains("Flamm"))
     }
 
+    // MARK: Gravity-well view (issue #38)
+
+    private static func terms(_ content: InfoContent) -> [String] {
+        content.section(.display)?.terms.map(\.term) ?? []
+    }
+
+    @Test func twoDHasNoWellTerms() {
+        let (content, _) = Info.content()
+        #expect(!Self.terms(content).contains("Wells"))
+        #expect(!Self.terms(content).contains("Flattened orbits"))
+    }
+
+    /// Split shows both views, so both sets of terms apply.
+    @Test func splitExplainsTheSheetAndTheOrbitView() throws {
+        let (content, _) = Info.content { $0.advanced.display.viewMode = .split }
+        let terms = Self.terms(content)
+        #expect(terms.contains("Wells") && terms.contains("Flattened orbits"))
+        #expect(terms.contains("Grid") && terms.contains("CoM") && terms.contains("Green band"))
+        let wells = try #require(content.section(.display)?.terms.first { $0.term == "Wells" })
+        #expect(wells.definition.contains("log"))
+        #expect(wells.definition.contains("not real spacetime"))
+    }
+
+    /// 3D has no flat grid, CoM marker or band: the habitable zone is two rings on the sheet.
+    @Test func threeDDropsTheOrbitViewTerms() {
+        let (content, _) = Info.content { $0.advanced.display.viewMode = .threeD }
+        let terms = Self.terms(content)
+        #expect(terms.contains("Wells") && terms.contains("Green rings"))
+        #expect(!terms.contains("Grid") && !terms.contains("CoM") && !terms.contains("Green band"))
+    }
+
+    @Test func strongFieldWellsAreFlammsFunnel() throws {
+        let (content, _) = Info.content {
+            Info.strongField(.stellarBlackHole)(&$0)
+            $0.advanced.display.viewMode = .threeD
+        }
+        let wells = try #require(content.section(.display)?.terms.first { $0.term == "Wells" })
+        #expect(wells.definition.contains("Flamm"))
+    }
+
     @Test func snapshotFollowsTheViewModel() {
         let viewModel = Info.viewModel()
         #expect(viewModel.infoSnapshot.config.strongFieldScenario == .stellarBlackHole)

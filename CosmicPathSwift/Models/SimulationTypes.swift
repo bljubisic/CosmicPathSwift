@@ -771,6 +771,9 @@ struct DisplaySettings: Equatable, Codable, Sendable {
     /// Freeze the automatic zoom at its current scale (the view still follows the CoM).
     var lockZoom: Bool = false
 
+    /// Orbit view, gravity-well sheet, or both (issue #38).
+    var viewMode: CanvasViewMode = .twoD
+
     /// Trail points shown at multiplier 1 (the length before PR 3).
     static let baseTrailPoints = 800
 

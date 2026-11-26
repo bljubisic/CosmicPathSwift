@@ -156,27 +156,11 @@ struct SimulationCanvasView: View {
                 vectorArrows
 
                 if showsOverlays {
-                    overlays
+                    CanvasOverlaysView(viewModel: viewModel, insets: overlayInsets,
+                                       showsFormulas: showsFormulas, showsEventBanner: showsEventBanner)
                 }
             }
-            .onAppear {
-                canvasSize = geometry.size
-                // Only create a new engine on the very first appearance.
-                // In portrait mode, SwiftUI creates separate SimulationCanvasView
-                // instances for the running and paused branches, so .onAppear fires
-                // again when the user pauses. Calling setup() there would reset the
-                // simulation unexpectedly — resizeCanvas() is sufficient to adapt
-                // the existing engine to the new canvas dimensions.
-                if viewModel.isSetup {
-                    viewModel.resizeCanvas(geometry.size)
-                } else {
-                    viewModel.setup(canvasSize: geometry.size)
-                }
-            }
-            .onChange(of: geometry.size) { _, newSize in
-                canvasSize = newSize
-                viewModel.resizeCanvas(newSize)
-            }
+            .simulationCanvasLifecycle(viewModel: viewModel, canvasSize: $canvasSize, size: geometry.size)
             // Camera rotation gesture: drag horizontally to change azimuth,
             // vertically to change elevation. Elevation is clamped in rotateCamera().
             //
@@ -210,48 +194,16 @@ struct SimulationCanvasView: View {
     }
 
     private func trailColor(for index: Int) -> Color {
-        if isThreeBody, viewModel.bodyIDs.indices.contains(index) {
-            return BodyView.paletteColor(for: viewModel.bodyIDs[index]).opacity(0.5)
-        }
-        if index == 0 { return .orange.opacity(0.4) }
-        return viewModel.metrics.isAbsorbed ? .red.opacity(0.3) : .cyan.opacity(0.5)
+        BodyAppearance.trailColor(for: index, viewModel: viewModel)
     }
 
     // MARK: - Bodies
 
-    /// Builds the view for one body.
-    ///
-    /// 2-body: body1 is the classic star (or black hole) and body2 the planet tinted
-    /// by time dilation. 3-body: every body uses its ID's palette colour; size
-    /// follows its kind and mass relative to the preset's mass unit.
+    /// The body's view, shared with the gravity-well sheet (`BodyAppearance`).
     private func bodyView(for index: Int) -> BodyView {
-        let kind = viewModel.bodyKinds.indices.contains(index) ? viewModel.bodyKinds[index] : .star
-        let multipliers = viewModel.bodyMassMultipliers
-        let multiplier = multipliers.indices.contains(index) ? multipliers[index] : 1
-        let referenceStarMultiplier = isThreeBody ? 1 : (multipliers.first ?? 1)
-        let referenceStar = BodyView.starRadius(massMultiplier: referenceStarMultiplier, zoomSizeScale: zoomSizeScale)
-
-        let radius: CGFloat
-        switch kind {
-        case .star:
-            radius = BodyView.starRadius(massMultiplier: multiplier, zoomSizeScale: zoomSizeScale)
-        case .planet:
-            radius = BodyView.planetRadius(starRadius: referenceStar, massMultiplier: multiplier)
-        case .moon:
-            radius = BodyView.moonRadius(starRadius: referenceStar, massMultiplier: multiplier)
-        }
-
-        if isThreeBody {
-            let id = viewModel.bodyIDs.indices.contains(index) ? viewModel.bodyIDs[index] : index
-            return BodyView(kind: kind, radius: radius, tint: BodyView.paletteColor(for: id))
-        }
-        if index == 0 {
-            let rs = CGFloat(viewModel.metrics.schwarzschildRadius) * CGFloat(viewModel.coordinateScale)
-            return BodyView(kind: kind, radius: radius, tint: nil,
-                            blackHoleRadius: viewModel.metrics.isBlackHole ? rs : nil)
-        }
-        return BodyView(kind: kind, radius: radius, tint: viewModel.metrics.timeDilationColor,
-                        isHabitable: viewModel.habitableStatus == .habitable)
+        BodyAppearance.bodyView(
+            for: index, viewModel: viewModel, zoomSizeScale: zoomSizeScale, coordinateScale: viewModel.coordinateScale
+        )
     }
 
     // MARK: - Vector Arrows
@@ -352,18 +304,6 @@ struct SimulationCanvasView: View {
         }
     }
 
-    // MARK: - Event Overlay
-
-    /// Absorption (2-body) or merge / ejection (3-body) banner (`EventBannerView`),
-    /// centred at the bottom of the canvas.
-    private var eventOverlay: some View {
-        VStack {
-            Spacer()
-            EventBannerView(viewModel: viewModel)
-                .padding(.bottom, 20)
-        }
-    }
-
     // MARK: - Spacetime Grid
 
     /// Draws a grid of vertical and horizontal lines warped toward the bodies to
@@ -443,68 +383,10 @@ struct SimulationCanvasView: View {
 
     // MARK: - Trail Path
 
-    /// Number of opacity steps a trail's fade is drawn in.
-    private static let trailFadeBands = 64
-
-    /// Renders an orbital trail with progressive opacity: older points are more
-    /// transparent, newer ones more opaque, showing the direction of motion.
-    ///
-    /// The fade is drawn in up to `trailFadeBands` polylines rather than one stroke
-    /// per segment, so long trails (up to 3200 points) stay cheap to render.
+    /// An orbital trail fading from old to new (`TrailRenderer`).
     private func trailPath(points: [CGPoint], color: Color) -> some View {
         Canvas { context, _ in
-            let segments = points.count - 1
-            guard segments > 0 else { return }
-            let bands = min(Self.trailFadeBands, segments)
-            for band in 0..<bands {
-                let start = band * segments / bands
-                let end = (band + 1) * segments / bands
-                var path = Path()
-                path.move(to: points[start])
-                for i in (start + 1)...end {
-                    path.addLine(to: points[i])
-                }
-                let opacity = Double(end) / Double(segments + 1)
-                context.stroke(path, with: .color(color.opacity(opacity)), lineWidth: 1.5)
-            }
-        }
-    }
-
-
-    // MARK: - Overlays
-
-    /// Formula text, badges and the event banner, inset by `overlayInsets`
-    /// (the drawing itself is not inset).
-    private var overlays: some View {
-        Group {
-            if showsFormulas {
-                formulaOverlay
-            }
-
-            if isThreeBody {
-                ChaosTwinBadge(viewModel: viewModel)
-            } else {
-                HabitableZoneBadge(viewModel: viewModel)
-            }
-
-            if showsEventBanner {
-                eventOverlay
-            }
-        }
-        .padding(overlayInsets)
-    }
-
-    // MARK: - Formula Overlay
-
-    /// The governing equations (`FormulaOverlayView`) in the top-left corner.
-    private var formulaOverlay: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                FormulaOverlayView(viewModel: viewModel)
-                    .padding(8)
-                Spacer()
-            }
-            Spacer()
+            TrailRenderer.stroke(points, color: color, in: context)
         }
     }
 
@@ -548,19 +430,8 @@ struct SimulationCanvasView: View {
 
     // MARK: - Helpers
 
-    /// Zoom-based size multiplier for celestial bodies.
-    /// At the default separation (1 AU), this is 1.0. As the distance increases
-    /// and the view zooms out, bodies shrink proportionally (clamped to 40%-100%)
-    /// so they don't dominate the canvas at high zoom-out levels. In strong field
-    /// the reference is the orbit itself, since 1 AU there is 10⁸ length units.
+    /// Zoom-based size multiplier for celestial bodies (`BodyAppearance.zoomSizeScale`).
     private var zoomSizeScale: CGFloat {
-        // coordinateScale is inversely proportional to the viewed extent.
-        // Compute the reference scale at the reference separation.
-        let referenceExtent = viewModel.config.bodySizeReferenceLength * CelestialConstants.orbitMarginFactor
-        let minDim = max(min(canvasSize.width, canvasSize.height), 1) // guard against zero
-        let halfCanvas = minDim * 0.40
-        let referenceScale = halfCanvas / referenceExtent
-        let ratio = CGFloat(viewModel.coordinateScale) / referenceScale
-        return max(0.4, min(1.0, ratio))
+        BodyAppearance.zoomSizeScale(viewModel: viewModel, canvasSize: canvasSize, coordinateScale: viewModel.coordinateScale)
     }
 }

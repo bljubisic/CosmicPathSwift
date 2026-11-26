@@ -248,6 +248,7 @@ struct AdvancedControlsView: View {
 
     private var displaySection: some View {
         Section {
+            viewModePicker
             explainedToggle(
                 "Spacetime Grid",
                 isOn: $viewModel.config.advanced.display.showSpacetimeGrid,
@@ -284,11 +285,25 @@ struct AdvancedControlsView: View {
         }
     }
 
+    private var viewModePicker: some View {
+        captionedRow(
+            "View",
+            caption: "Split and 3D draw spacetime as a sheet pulled down into a well under each body. An illustration of gravity, not real spacetime: wells deepen with the log of the mass so light bodies stay visible, and orbits are flattened onto the sheet."
+        ) {
+            Picker("View", selection: $viewModel.config.advanced.display.viewMode) {
+                ForEach(CanvasViewMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
     private var warpSlider: some View {
         let strength = $viewModel.config.advanced.display.gridWarpStrength
         return captionedRow(
             "Grid Warp: ×\(String(format: "%.2g", strength.wrappedValue))",
-            caption: "How strongly the grid is pulled toward the bodies. 0 gives a flat grid. Around Realistic black holes, ×1 follows the real curvature: deep near the hole, faint far from it."
+            caption: "How strongly the grid is pulled toward the bodies, and how deep the wells are in Split and 3D. 0 gives a flat grid. Around Realistic black holes, ×1 follows the real curvature: deep near the hole, faint far from it."
         ) {
             Slider(value: strength, in: DisplaySettings.gridWarpRange, step: 0.25)
         }
