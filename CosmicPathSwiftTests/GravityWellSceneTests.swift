@@ -111,8 +111,8 @@ struct GravityWellSceneBuilderTests {
 
 struct WellCameraTests {
 
-    @Test func defaultIsSixtyFiveDegrees() {
-        #expect(abs(WellCamera.defaultElevation - 65 * .pi / 180) < 1e-12)
+    @Test func defaultIsSixtyDegrees() {
+        #expect(abs(WellCamera.defaultElevation - 60 * .pi / 180) < 1e-12)
     }
 
     @Test func elevationIsClampedAboveTheSheet() {
@@ -217,6 +217,16 @@ struct GravityWellViewModelTests {
         vm.rotateWellCamera(deltaAzimuth: 1, deltaElevation: -0.3)
         vm.applyCameraPreset(preset)
         #expect(vm.wellCameraElevation == WellCamera.elevation(for: preset))
+    }
+
+    /// Opening a scenario (deep link) keeps the view the user chose.
+    @Test func openingAScenarioKeepsTheViewMode() {
+        let (vm, _) = makeViewModel()
+        vm.config.advanced.display.viewMode = .threeD
+        vm.run(SimulationConfig(), canvasSize: canvas)
+        #expect(vm.config.advanced.display.viewMode == .threeD)
+        #expect(vm.gravityWellScene != nil)
+        vm.pause()
     }
 
     @Test func resetRestoresTheWellCamera() {

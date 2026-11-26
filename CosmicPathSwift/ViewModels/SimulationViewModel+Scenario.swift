@@ -20,7 +20,10 @@ extension SimulationViewModel {
         pause()
         cameraAzimuth = CameraPreset.tilted.azimuth
         cameraElevation = CameraPreset.tilted.elevation
-        wellCameraElevation = WellCamera.defaultElevation
+        wellCamera.apply(.tilted)
+        // The view mode is the user's choice, not part of the scenario (issue #38).
+        var config = config
+        config.advanced.display.viewMode = self.config.advanced.display.viewMode
         self.config = config
         applyConfigChange(canvasSize: canvasSize)
         start()

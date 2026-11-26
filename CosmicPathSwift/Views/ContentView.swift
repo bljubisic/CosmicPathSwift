@@ -69,6 +69,14 @@ struct ContentView: View {
                 viewModel.open(scenario, canvasSize: canvasSize)
             }
         }
+        #if DEBUG
+        // `-viewMode split|threeD` opens the gravity-well view, for screenshots.
+        .onAppear {
+            if let mode = UserDefaults.standard.string(forKey: "viewMode").flatMap(CanvasViewMode.init(rawValue:)) {
+                viewModel.config.advanced.display.viewMode = mode
+            }
+        }
+        #endif
         .onChange(of: canvasSize) { oldSize, newSize in
             guard oldSize == .zero, newSize != .zero,
                   let config = pendingScenario ?? launchScenario else { return }
@@ -123,8 +131,8 @@ struct ContentView: View {
         ZStack {
             if viewModel.isRunning {
                 // Running: full-screen canvas with floating pause button and metrics
-                SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize,
-                                     overlayInsets: safeArea, showsFormulas: false, showsEventBanner: false)
+                SimulationViewport(viewModel: viewModel, canvasSize: $canvasSize,
+                                   overlayInsets: safeArea, showsFormulas: false, showsEventBanner: false)
                     .ignoresSafeArea()
 
                 VStack {
@@ -150,6 +158,7 @@ struct ContentView: View {
                     HStack(spacing: 16) {
                         pauseButton
                         recordButton
+                        ViewModeButton(viewModel: viewModel, style: .floating)
                         floatingInfoButton
                         floatingAdvancedButton
                     }
@@ -160,7 +169,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     titleBar
 
-                    SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize)
+                    SimulationViewport(viewModel: viewModel, canvasSize: $canvasSize)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .padding(.horizontal)
                         .padding(.top, 8)
@@ -191,8 +200,8 @@ struct ContentView: View {
     /// directly above them (#26).
     private func landscapeLayout(safeArea: EdgeInsets) -> some View {
         ZStack(alignment: .bottom) {
-            SimulationCanvasView(viewModel: viewModel, canvasSize: $canvasSize,
-                                 overlayInsets: safeArea, showsEventBanner: false)
+            SimulationViewport(viewModel: viewModel, canvasSize: $canvasSize,
+                               overlayInsets: safeArea, showsEventBanner: false)
                 .ignoresSafeArea()
 
             if viewModel.isRunning {
@@ -210,6 +219,7 @@ struct ContentView: View {
                     HStack(spacing: 16) {
                         pauseButton
                         recordButton
+                        ViewModeButton(viewModel: viewModel, style: .floating)
                         floatingInfoButton
                         floatingAdvancedButton
                     }

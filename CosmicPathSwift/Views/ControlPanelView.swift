@@ -75,10 +75,15 @@ struct ControlPanelView: View {
                 Button {
                     viewModel.reset(canvasSize: canvasSize)
                 } label: {
-                    Label("Reset", systemImage: "arrow.counterclockwise")
+                    // Icon only when the row is too narrow for the title.
+                    ViewThatFits(in: .horizontal) {
+                        Label("Reset", systemImage: "arrow.counterclockwise")
+                        Image(systemName: "arrow.counterclockwise")
+                    }
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
+                .accessibilityLabel("Reset")
 
                 // Restores the camera to its default azimuth=0°, elevation=30° view.
                 // Useful after dragging the orbit to an awkward angle.
@@ -90,6 +95,9 @@ struct ControlPanelView: View {
                 .buttonStyle(.bordered)
                 .tint(.blue)
                 .help("Reset Camera")
+
+                // 2D → Split → 3D gravity-well view (issue #38).
+                ViewModeButton(viewModel: viewModel)
 
                 // "What am I looking at?" (issue #34): available to everyone.
                 Button(action: onShowInfo) {

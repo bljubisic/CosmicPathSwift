@@ -261,8 +261,8 @@ class SimulationViewModel {
     /// Modified by vertical drag gestures in `SimulationCanvasView`.
     var cameraElevation: Double = .pi / 6
 
-    /// Gravity-well sheet's own elevation (#38); it shares `cameraAzimuth`.
-    var wellCameraElevation: Double = WellCamera.defaultElevation
+    /// Gravity-well sheet's own elevation and zoom (#38); it shares `cameraAzimuth`.
+    let wellCamera = WellCameraState()
 
     /// What the gravity-well sheet is drawn from; nil in the 2D view.
     var gravityWellScene: GravityWellScene?
@@ -414,7 +414,7 @@ class SimulationViewModel {
         // always recognisable after reset.
         cameraAzimuth = CameraPreset.tilted.azimuth
         cameraElevation = CameraPreset.tilted.elevation
-        wellCameraElevation = WellCamera.defaultElevation
+        wellCamera.apply(.tilted)
         setup(canvasSize: canvasSize)
     }
 
@@ -554,7 +554,7 @@ class SimulationViewModel {
     func applyCameraPreset(_ preset: CameraPreset) {
         cameraAzimuth = preset.azimuth
         cameraElevation = preset.elevation
-        wellCameraElevation = WellCamera.elevation(for: preset)
+        wellCamera.apply(preset)
         transformer = makeTransformer()
         syncState()
     }

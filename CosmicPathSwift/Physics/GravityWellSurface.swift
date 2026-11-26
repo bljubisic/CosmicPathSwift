@@ -27,6 +27,9 @@ struct WellSource: Equatable, Sendable {
     let x: Double
     let y: Double
     let mass: Double
+    /// Narrowest this body's well may be: 2 rₛ for Visual Black Hole Mode's
+    /// hole, whose drawn disc would otherwise hide a narrower funnel.
+    var minimumWidth: Double = 0
 }
 
 // MARK: - GravityWellProfile
@@ -34,7 +37,8 @@ struct WellSource: Equatable, Sendable {
 /// The shape of the wells.
 enum GravityWellProfile: Equatable, Sendable {
     /// Softened, log-weighted, soft-capped Newtonian wells.
-    /// - wellWidth: softening ε of each well's 1/√(r² + ε²) profile.
+    /// - wellWidth: softening ε of each well's 1/√(r² + ε²) profile (a source's
+    ///   `minimumWidth` can widen its own well).
     /// - depthScale: depth of a weight-1 well's bottom before the cap.
     /// - cap: depth the tanh soft cap approaches but never reaches.
     case newtonian(wellWidth: Double, depthScale: Double, cap: Double)
@@ -59,9 +63,9 @@ struct GravityWellSurface: Equatable, Sendable {
     /// Well width as a fraction of the view extent (the softening is usually far smaller).
     static let wellWidthFraction = 0.12
     /// Depth of a weight-1 well before the cap, as a fraction of the view extent.
-    static let depthFraction = 0.5
+    static let depthFraction = 1.0
     /// Soft-cap depth as a fraction of the view extent.
-    static let capFraction = 0.7
+    static let capFraction = 1.4
     /// Radius where the Flamm funnel meets the flat sheet, as a fraction of the view extent.
     static let rimFraction = 1.6
 
@@ -92,6 +96,12 @@ struct GravityWellSurface: Equatable, Sendable {
         return strength * Self.flammDepth(r: 0, rs: rs, rim: rim)
     }
 
+    /// Width ε of source `index`'s well: the profile's width, or the source's minimum if wider.
+    func wellWidth(of index: Int) -> Double {
+        guard case let .newtonian(width, _, _) = profile else { return 0 }
+        return max(width, sources[index].minimumWidth)
+    }
+
     /// Log weight of source `index`: 1 for the heaviest, at least `minimumWeight`
     /// for any body with mass, 0 for a massless one.
     func weight(of index: Int) -> Double {
@@ -104,7 +114,8 @@ struct GravityWellSurface: Equatable, Sendable {
         var raw = 0.0
         for (source, weight) in zip(sources, weights) where weight > 0 {
             let r = hypot(x - source.x, y - source.y)
-            raw += weight * wellWidth / (r * r + wellWidth * wellWidth).squareRoot()
+            let width = max(wellWidth, source.minimumWidth)
+            raw += weight * width / (r * r + width * width).squareRoot()
         }
         return cap * tanh(strength * depthScale * raw / cap)
     }
@@ -144,7 +155,13 @@ extension GravityWellSurface {
     static func make(
         bodies: [CelestialBody], config: SimulationConfig, viewExtent: Double, strength: Double
     ) -> GravityWellSurface {
-        let sources = bodies.map { WellSource(x: $0.position.x, y: $0.position.y, mass: $0.mass) }
+        // Visual Black Hole Mode draws the hole as a disc rₛ wide (2-body only).
+        let holeWidth = config.isBlackHoleMode && config.mode == .twoBody && !config.isStrongField
+            ? 2 * config.scale.constants.schwarzschildRadius(mass: bodies.first?.mass ?? 0) : 0
+        let sources = bodies.enumerated().map { index, body in
+            WellSource(x: body.position.x, y: body.position.y, mass: body.mass,
+                       minimumWidth: index == 0 ? holeWidth : 0)
+        }
         return GravityWellSurface(
             sources: sources,
             profile: profile(bodies: bodies, config: config, viewExtent: viewExtent),

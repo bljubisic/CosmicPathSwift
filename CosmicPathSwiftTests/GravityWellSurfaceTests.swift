@@ -87,6 +87,17 @@ struct NewtonianWellTests {
         #expect(bottom > sheet.depth(x: width * 0.1, y: 0))
     }
 
+    /// A body drawn bigger than the well (Visual Black Hole Mode's disc) widens its own well only.
+    @Test func minimumWidthWidensOnlyThatWell() {
+        let sheet = surface([
+            WellSource(x: 0, y: 0, mass: 5000, minimumWidth: 40), WellSource(x: 1000, y: 0, mass: 1)
+        ])
+        #expect(sheet.wellWidth(of: 0) == 40)
+        #expect(sheet.wellWidth(of: 1) == width)
+        let narrow = surface([WellSource(x: 0, y: 0, mass: 5000), WellSource(x: 1000, y: 0, mass: 1)])
+        #expect(sheet.depth(x: 30, y: 0) > narrow.depth(x: 30, y: 0))
+    }
+
     @Test func zeroStrengthIsFlat() {
         let sheet = surface([WellSource(x: 0, y: 0, mass: 1)], strength: 0)
         #expect(sheet.depth(x: 0, y: 0) == 0)
@@ -172,6 +183,18 @@ struct GravityWellSurfaceFactoryTests {
     @Test func flattensInclinedOrbits() {
         let sheet = GravityWellSurface.make(bodies: bodies(), config: SimulationConfig(), viewExtent: 150, strength: 1)
         #expect(sheet.sources[1] == WellSource(x: 150, y: 0, mass: 5))
+    }
+
+    /// Visual Black Hole Mode draws the hole rₛ wide, so its well is at least 2 rₛ wide.
+    @Test func blackHoleModeWidensTheHolesWell() {
+        var config = SimulationConfig()
+        config.isBlackHoleMode = true
+        let hole = CelestialBody(id: 0, kind: .star, mass: 5000, position: .zero, velocity: .zero)
+        let planet = CelestialBody(id: 1, kind: .planet, mass: 5, position: Vector3D(x: 300, y: 0, z: 0), velocity: .zero)
+        let sheet = GravityWellSurface.make(bodies: [hole, planet], config: config, viewExtent: 300, strength: 1)
+        let rs = config.scale.constants.schwarzschildRadius(mass: 5000)
+        #expect(sheet.sources[0].minimumWidth == 2 * rs)
+        #expect(sheet.sources[1].minimumWidth == 0)
     }
 
     @Test func strongFieldUsesFlamm() {
